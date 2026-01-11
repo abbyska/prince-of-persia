@@ -417,6 +417,32 @@ function init() {
     window.addEventListener('keydown', (e) => keys[e.key] = true);
     window.addEventListener('keyup', (e) => keys[e.key] = false);
 
+    // Mobile Control Listeners
+    const setupMobileBtn = (id, key) => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+
+        const startAction = (e) => {
+            e.preventDefault();
+            keys[key] = true;
+        };
+        const endAction = (e) => {
+            e.preventDefault();
+            keys[key] = false;
+        };
+
+        btn.addEventListener('mousedown', startAction);
+        btn.addEventListener('touchstart', startAction, { passive: false });
+        btn.addEventListener('mouseup', endAction);
+        btn.addEventListener('touchend', endAction, { passive: false });
+        btn.addEventListener('mouseleave', endAction);
+    };
+
+    setupMobileBtn('btn-left', 'ArrowLeft');
+    setupMobileBtn('btn-right', 'ArrowRight');
+    setupMobileBtn('btn-down', 'ArrowDown');
+    setupMobileBtn('btn-jump', 'ArrowUp');
+
     // Initialize entities from map
     for (let r = 0; r < levelMap.length; r++) {
         for (let c = 0; c < levelMap[r].length; c++) {
