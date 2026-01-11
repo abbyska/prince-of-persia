@@ -171,17 +171,31 @@ body {
 }
 
 #mobile-controls button {
-    width: 60px;
-    height: 60px;
-    border-radius: 50%;
-    background: var(--glass-bg);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    width: 70px;
+    height: 70px;
+    border-radius: 8px;
+    background: var(--lego-blue);
+    border: none;
     color: white;
-    font-size: 1.5rem;
+    font-size: 1.8rem;
+    font-weight: 900;
     display: flex;
     justify-content: center;
     align-items: center;
     touch-action: none;
+    box-shadow: 0 6px 0 #003366;
+    transition: transform 0.05s;
+}
+
+#mobile-controls button:active {
+    transform: translateY(4px);
+    box-shadow: 0 2px 0 #003366;
+}
+
+#btn-jump {
+    background: var(--primary-yellow) !important;
+    box-shadow: 0 6px 0 #b38600 !important;
+    color: #000 !important;
 }
 
 @media (max-width: 768px) {
