@@ -48,27 +48,34 @@ class Player {
     update() {
         if (this.state === 'dead') return;
 
-        // Apply Physics
+        // Apply Gravity
         this.vy += GRAVITY;
-        this.x += this.vx;
-        this.y += this.vy;
 
-        // Friction
-        if (this.grounded) {
-            this.vx *= FRICTION;
-        }
-
-        // Cinematic Movement (Inertia)
+        // Horizontal Movement (Cinematic Inertia)
         const targetSpeed = (keys['ArrowRight'] || keys['d']) ? SPEED : (keys['ArrowLeft'] || keys['a']) ? -SPEED : 0;
 
+        console.log(`Keys: ArrowLeft=${keys['ArrowLeft']}, ArrowRight=${keys['ArrowRight']}, targetSpeed=${targetSpeed}, vx=${this.vx}, grounded=${this.grounded}`);
+
         if (targetSpeed !== 0) {
-            this.vx += (targetSpeed - this.vx) * 0.15;
+            this.vx += (targetSpeed - this.vx) * 0.4; // Faster acceleration for better responsiveness
             this.direction = targetSpeed > 0 ? 1 : -1;
             if (this.grounded) this.state = 'running';
-        } else if (this.grounded) {
-            this.vx *= 0.8;
-            this.state = 'idle';
+        } else {
+            this.vx *= 0.8; // Slightly less friction for smoother stop
+            if (this.grounded && Math.abs(this.vx) < 0.1) {
+                this.vx = 0;
+                this.state = 'idle';
+            }
         }
+
+        console.log(`After update: vx=${this.vx}, x=${this.x}`);
+
+        // Apply Movement & Collision (Separated X and Y)
+        this.x += this.vx;
+        this.checkCollisions(true); // Horizontal check
+
+        this.y += this.vy;
+        this.checkCollisions(false); // Vertical check
 
         // Jump Input
         if ((keys['ArrowUp'] || keys['w'] || keys[' ']) && this.grounded) {
@@ -83,53 +90,88 @@ class Player {
             setTimeout(() => this.isAttacking = false, 300);
         }
 
-        // Collision Detection
-        this.checkCollisions();
-
         // Ledge Detection (Iconic)
         if (this.state === 'hanging') {
             if (keys['ArrowUp'] || keys['w']) {
-                // Climb up
                 this.y -= TILE_SIZE;
                 this.x += this.direction * (TILE_SIZE / 2);
                 this.state = 'idle';
             } else if (keys['ArrowDown'] || keys['s']) {
-                // Let go
                 this.state = 'falling';
             }
         } else if (!this.grounded && this.state === 'falling') {
             this.checkLedges();
         }
 
-        // Update state for animation
         if (!this.grounded && this.state !== 'hanging') {
             this.state = this.vy < 0 ? 'jumping' : 'falling';
         }
 
-        // Check Items/Hazards
         this.checkInteractions();
     }
 
-    checkInteractions() {
-        const col = Math.floor((this.x + this.width / 2) / TILE_SIZE);
-        const row = Math.floor((this.y + this.height / 2) / TILE_SIZE);
-        const tile = levelMap[row] ? levelMap[row][col] : 0;
+    checkCollisions(horizontal) {
+        const left = Math.floor(this.x / TILE_SIZE);
+        const right = Math.floor((this.x + this.width) / TILE_SIZE);
+        const top = Math.floor(this.y / TILE_SIZE);
+        const bottom = Math.floor((this.y + this.height) / TILE_SIZE);
 
-        if (tile === 5) { // Collect Sword
-            this.hasSword = true;
-            levelMap[row][col] = 0; // Remove sword from map
-            updateUI();
-        } else if (tile === 7) { // Spikes
-            this.die();
+        if (!horizontal) this.grounded = false;
+
+        for (let r = top; r <= bottom; r++) {
+            for (let c = left; c <= right; c++) {
+                if (levelMap[r] && levelMap[r][c] === 1) {
+                    const tileX = c * TILE_SIZE;
+                    const tileY = r * TILE_SIZE;
+
+                    if (horizontal) {
+                        // Horizontal Resolve
+                        if (this.vx > 0) {
+                            this.x = tileX - this.width;
+                            this.vx = 0;
+                        } else if (this.vx < 0) {
+                            this.x = tileX + TILE_SIZE;
+                            this.vx = 0;
+                        }
+                    } else {
+                        // Vertical Resolve
+                        if (this.vy > 0) {
+                            this.y = tileY - this.height;
+                            this.vy = 0;
+                            this.grounded = true;
+                        } else if (this.vy < 0) {
+                            this.y = tileY + TILE_SIZE;
+                            this.vy = 0;
+                        }
+                    }
+                }
+            }
         }
     }
 
-    die() {
-        if (this.state === 'dead') return;
-        this.state = 'dead';
-        this.health = 0;
-        updateUI();
-        setTimeout(() => location.reload(), 2000); // Restart game after death
+    checkLedges() {
+        // Placeholder for ledge hanging mechanic
+    }
+
+    checkInteractions() {
+        // Check for sword pickup
+        const playerCol = Math.floor((this.x + this.width / 2) / TILE_SIZE);
+        const playerRow = Math.floor((this.y + this.height / 2) / TILE_SIZE);
+
+        if (levelMap[playerRow] && levelMap[playerRow][playerCol] === 5) {
+            this.hasSword = true;
+            levelMap[playerRow][playerCol] = 0; // Remove sword from map
+        }
+
+        // Check for spike damage
+        for (let spike of spikes) {
+            if (this.x < spike.x + spike.width &&
+                this.x + this.width > spike.x &&
+                this.y < spike.y + spike.height &&
+                this.y + this.height > spike.y) {
+                this.takeDamage();
+            }
+        }
     }
 
     takeDamage() {
@@ -137,60 +179,7 @@ class Player {
         this.health--;
         updateUI();
         if (this.health <= 0) {
-            this.die();
-        }
-    }
-
-    checkLedges() {
-        // Look for tiles to the left/right of the player's hands
-        const handX = this.direction === 1 ? this.x + this.width + 5 : this.x - 5;
-        const handY = this.y + 10;
-        const col = Math.floor(handX / TILE_SIZE);
-        const row = Math.floor(handY / TILE_SIZE);
-
-        if (levelMap[row] && levelMap[row][col] === 1) {
-            // Found a ledge!
-            this.state = 'hanging';
-            this.vy = 0;
-            this.vx = 0;
-            this.y = row * TILE_SIZE; // Snap to ledge
-        }
-    }
-
-    checkCollisions() {
-        const left = Math.floor(this.x / TILE_SIZE);
-        const right = Math.floor((this.x + this.width) / TILE_SIZE);
-        const top = Math.floor(this.y / TILE_SIZE);
-        const bottom = Math.floor((this.y + this.height) / TILE_SIZE);
-
-        this.grounded = false;
-
-        for (let r = top; r <= bottom; r++) {
-            for (let c = left; c <= right; c++) {
-                if (levelMap[r] && levelMap[r][c] === 1) {
-                    const tileY = r * TILE_SIZE;
-                    const tileX = c * TILE_SIZE;
-
-                    // Vertical collision
-                    if (this.vy >= 0 && this.y + this.height > tileY && this.y < tileY) {
-                        this.y = tileY - this.height;
-                        this.vy = 0;
-                        this.grounded = true;
-                    } else if (this.vy < 0 && this.y < tileY + TILE_SIZE && this.y + this.height > tileY + TILE_SIZE) {
-                        this.y = tileY + TILE_SIZE;
-                        this.vy = 0;
-                    }
-
-                    // Horizontal collision
-                    if (this.vx > 0 && this.x + this.width > tileX && this.x < tileX) {
-                        this.x = tileX - this.width;
-                        this.vx = 0;
-                    } else if (this.vx < 0 && this.x < tileX + TILE_SIZE && this.x + this.width > tileX + TILE_SIZE) {
-                        this.x = tileX + TILE_SIZE;
-                        this.vx = 0;
-                    }
-                }
-            }
+            this.state = 'dead';
         }
     }
 
@@ -425,17 +414,18 @@ function init() {
         const startAction = (e) => {
             e.preventDefault();
             keys[key] = true;
+            console.log(`Button ${id} pressed, setting ${key} to true`);
         };
         const endAction = (e) => {
             e.preventDefault();
             keys[key] = false;
+            console.log(`Button ${id} released, setting ${key} to false`);
         };
 
-        btn.addEventListener('mousedown', startAction);
-        btn.addEventListener('touchstart', startAction, { passive: false });
-        btn.addEventListener('mouseup', endAction);
-        btn.addEventListener('touchend', endAction, { passive: false });
-        btn.addEventListener('mouseleave', endAction);
+        btn.addEventListener('pointerdown', startAction);
+        btn.addEventListener('pointerup', endAction);
+        btn.addEventListener('pointerleave', endAction);
+        btn.addEventListener('pointercancel', endAction);
     };
 
     setupMobileBtn('btn-left', 'ArrowLeft');
