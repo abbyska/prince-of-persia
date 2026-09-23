@@ -8,6 +8,10 @@ desktops.
 
 - **320×200 screen** in a VGA-style blue dungeon palette. It is scaled up with
   sharp pixels and shown at 4:3, the shape of a 1989 monitor.
+- **Pseudo-3D depth like the original:** floors are slabs with a receding top
+  surface, a front face and angled ends at drops; slabs and stone blocks cast
+  shadows; the Prince passes behind pillars, and ledge lips cover his hands
+  when he hangs.
 - **One room per screen.** The camera cuts from room to room instead of
   scrolling. Each room is 10 tiles wide and 3 tall, as in the original.
 - **Movement comes from animation, not free physics.** The Prince builds up to

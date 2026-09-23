@@ -16,7 +16,11 @@ const PAL = {
   blockHi: '#a4ace0',
   blockLo: '#3c4478',
   blockMark: '#56629a',
+  floorBack: '#767eb4',
   floorTop: '#c0c6ec',
+  floorEdge: '#dce0f8',
+  floorSide: '#3a4276',
+  blockSide: '#3e477c',
   floorMid: '#9098cc',
   floorFront: '#5c6498',
   floorLine: '#14183a',
@@ -45,6 +49,14 @@ const PAL = {
   guardHp: '#5480fc',
   text: '#fcfcfc',
 };
+
+// Pseudo-3D slab geometry. Floors are seen from slightly above and to the
+// left: the top surface recedes DEPTH rows, its back edge shifted SKEW pixels
+// right, so the ends of floors and blocks show a side face.
+const SLAB_TOP = 50;
+const DEPTH = 7;
+const SKEW = 4;
+const FRONT_Y = SLAB_TOP + DEPTH; // first row of the slab's front face
 
 function hash(a, b, c = 0) {
   let h = (a * 374761393 + b * 668265263 + c * 2147483647) | 0;
@@ -80,7 +92,7 @@ export class Renderer {
         const y = r * TILE_H;
         const tl = level.tile(wc, wr);
         if (tl.t === T.WALL) this.wallBlock(ctx, x, y, wc, wr, level);
-        else this.backWall(ctx, x, y, wc, wr);
+        else this.backWall(ctx, x, y, wc, wr, level);
       }
     }
     for (let r = 0; r < ROOM_ROWS; r++) {
@@ -103,8 +115,10 @@ export class Renderer {
             this.floor(ctx, x, y, wc, wr, level);
             break;
           case T.PILLAR:
-            this.pillar(ctx, x, y);
             this.floor(ctx, x, y, wc, wr, level);
+            break;
+          case T.WALL:
+            this.wallDepth(ctx, x, y, wc, wr, level);
             break;
           case T.RUBBLE:
             this.floor(ctx, x, y, wc, wr, level);
@@ -120,9 +134,36 @@ export class Renderer {
     return this.cache;
   }
 
+  // Things in front of the characters: pillars, and the front lip of every
+  // floor, so a hanging Prince's hands go behind the ledge edge.
+  foreground(level, rx, ry) {
+    const key = `${rx},${ry},${level.version},${level.def.name}`;
+    if (!this.fg) {
+      this.fg = document.createElement('canvas');
+      this.fg.width = ROOM_W;
+      this.fg.height = ROOM_H;
+    }
+    if (key === this.fgKey) return this.fg;
+    this.fgKey = key;
+    const ctx = this.fg.getContext('2d');
+    ctx.clearRect(0, 0, ROOM_W, ROOM_H);
+    for (let r = 0; r < ROOM_ROWS; r++) {
+      for (let c = 0; c < ROOM_COLS; c++) {
+        const wc = rx * ROOM_COLS + c;
+        const wr = ry * ROOM_ROWS + r;
+        const x = c * TILE_W;
+        const y = r * TILE_H;
+        const t = level.tile(wc, wr).t;
+        if (t === T.PILLAR) this.pillar(ctx, x, y);
+        if (t !== T.EMPTY && t !== T.WALL && t !== T.LOOSE && t !== T.PLATE) this.floorFront(ctx, x, y, wc, wr, level);
+      }
+    }
+    return this.fg;
+  }
+
   // Background stonework: four courses of bricks of uneven width, each brick
   // bevelled light on top/left and dark on bottom/right, like the DOS dungeon.
-  backWall(ctx, x, y, c, r) {
+  backWall(ctx, x, y, c, r, level) {
     ctx.fillStyle = PAL.bgMortar;
     ctx.fillRect(x, y, TILE_W, TILE_H);
     let yy = y;
@@ -140,6 +181,19 @@ export class Renderer {
       }
       yy += h;
     }
+    // Shadows: under the slab above, and cast to the right by a stone block.
+    ctx.fillStyle = '#000';
+    if (level.hasFloor(c, r - 1)) {
+      ctx.globalAlpha = 0.5;
+      ctx.fillRect(x, y, TILE_W, 4);
+      ctx.globalAlpha = 0.25;
+      ctx.fillRect(x, y + 4, TILE_W, 6);
+    }
+    if (level.isWall(c - 1, r)) {
+      ctx.globalAlpha = 0.35;
+      ctx.fillRect(x, y, 7, TILE_H);
+    }
+    ctx.globalAlpha = 1;
   }
 
   brick(ctx, x, y, w, h, seed, leftEdge, rightEdge) {
@@ -180,40 +234,69 @@ export class Renderer {
         }
       }
     }
-    if (level.tile(c, r - 1).t === T.EMPTY) {
-      ctx.fillStyle = PAL.floorTop;
-      ctx.fillRect(x, y, TILE_W, 2);
-      ctx.fillStyle = PAL.floorMid;
-      ctx.fillRect(x, y + 2, TILE_W, 1);
+  }
+
+  // A stone block's top surface (open above) and right side face (open to the right).
+  wallDepth(ctx, x, y, c, r, level) {
+    const rightOpen = !level.isWall(c + 1, r);
+    if (!level.hasFloor(c, r - 1)) this.topSurface(ctx, x, y, level.isWall(c - 1, r) ? false : true, rightOpen, c, r);
+    if (rightOpen) {
+      for (let i = 0; i < SKEW; i++) {
+        const rise = Math.round(((i + 1) * (DEPTH - 1)) / SKEW);
+        ctx.fillStyle = PAL.blockSide;
+        ctx.fillRect(x + TILE_W + i, y + DEPTH - rise, 1, TILE_H - DEPTH);
+        ctx.fillStyle = PAL.floorLine;
+        for (let k = 1; k < 3; k++) ctx.fillRect(x + TILE_W + i, y + k * 21 - rise, 1, 1);
+      }
+      ctx.fillStyle = PAL.floorLine;
+      ctx.fillRect(x + TILE_W + SKEW - 1, y, 1, TILE_H - DEPTH);
     }
   }
 
-  // A floor slab: a lit top surface, a darker front face and a hard shadow line.
-  floor(ctx, x, y, c, r, level, dy = 0) {
-    const Y = y + 54 + dy;
-    ctx.fillStyle = PAL.floorTop;
-    ctx.fillRect(x, Y, TILE_W, 2);
-    ctx.fillStyle = PAL.floorMid;
-    ctx.fillRect(x, Y + 2, TILE_W, 2);
-    ctx.fillStyle = PAL.floorFront;
-    ctx.fillRect(x, Y + 4, TILE_W, 4);
-    ctx.fillStyle = PAL.floorLine;
-    ctx.fillRect(x, Y + 8, TILE_W, 1);
-    ctx.fillRect(x + TILE_W - 1, Y + 4, 1, 4);
+  topSurface(ctx, x, top, leftOpen, rightOpen, c, r) {
+    for (let k = 0; k < DEPTH; k++) {
+      const sh = Math.round(((DEPTH - 1 - k) * SKEW) / (DEPTH - 1));
+      const x0 = x + (leftOpen ? sh : 0);
+      const x1 = x + TILE_W + (rightOpen ? sh : 0);
+      ctx.fillStyle = k === 0 ? PAL.floorBack : k < 3 ? PAL.floorMid : k === DEPTH - 1 ? PAL.floorEdge : PAL.floorTop;
+      ctx.fillRect(x0, top + k, x1 - x0, 1);
+    }
     ctx.fillStyle = PAL.floorMid;
     for (let k = 0; k < 3; k++) {
       const h = hash(c, r, k + 40);
-      ctx.fillRect(x + (h % 30), Y + (h >> 5) % 2, 2, 1);
+      ctx.fillRect(x + 2 + (h % 26), top + 3 + ((h >> 5) % 3), 2, 1);
     }
-    if (level.tile(c - 1, r).t === T.EMPTY) {
-      ctx.fillStyle = PAL.floorLine;
-      ctx.fillRect(x, Y + 1, 1, 8);
-    }
+  }
+
+  // A floor slab: a receding lit top surface, a darker front face, and a side
+  // face where the floor ends at a drop.
+  floor(ctx, x, y, c, r, level, dy = 0) {
+    const top = y + SLAB_TOP + dy;
+    const leftOpen = level.tile(c - 1, r).t === T.EMPTY;
+    const rightOpen = level.tile(c + 1, r).t === T.EMPTY;
+    ctx.fillStyle = PAL.bgMortar;
+    ctx.fillRect(x + (leftOpen ? SKEW : 0), top - 1, TILE_W + (rightOpen ? 0 : 0), 1);
+    this.topSurface(ctx, x, top, leftOpen, rightOpen, c, r);
+    this.floorFront(ctx, x, y + dy, c, r, level);
+  }
+
+  floorFront(ctx, x, y, c, r, level) {
+    const f = y + FRONT_Y;
+    ctx.fillStyle = PAL.floorFront;
+    ctx.fillRect(x, f, TILE_W, 5);
+    ctx.fillStyle = PAL.floorLine;
+    ctx.fillRect(x, f + 5, TILE_W, 1);
+    ctx.fillRect(x + TILE_W - 1, f + 1, 1, 4);
+    if (level.tile(c - 1, r).t === T.EMPTY) ctx.fillRect(x, f, 1, 6);
     if (level.tile(c + 1, r).t === T.EMPTY) {
-      ctx.fillStyle = PAL.floorFront;
-      ctx.fillRect(x + TILE_W - 3, Y + 1, 3, 7);
-      ctx.fillStyle = PAL.floorLine;
-      ctx.fillRect(x + TILE_W - 1, Y, 1, 9);
+      for (let i = 0; i < SKEW; i++) {
+        const rise = Math.round(((i + 1) * (DEPTH - 1)) / SKEW);
+        ctx.fillStyle = PAL.floorSide;
+        ctx.fillRect(x + TILE_W + i, f - rise, 1, 6);
+        ctx.fillStyle = PAL.floorLine;
+        ctx.fillRect(x + TILE_W + i, f + 5 - rise, 1, 1);
+      }
+      ctx.fillRect(x + TILE_W + SKEW - 1, f - DEPTH + 1, 1, 6);
     }
   }
 
@@ -316,7 +399,7 @@ export class Renderer {
             this.flame(ctx, x, y, wc * 31 + wr);
             break;
           case T.SPIKES:
-            this.spikes(ctx, x, y, tl.ext);
+            this.spikes(ctx, x, y, tl.ext, false);
             break;
           case T.LOOSE: {
             const shaking = tl.fallIn > 0 || tl.wobble > 0;
@@ -327,11 +410,25 @@ export class Renderer {
             break;
           }
           case T.PLATE:
-            this.floor(ctx, x, y, wc, wr, level, tl.pressed ? 1 : 0);
-            ctx.fillStyle = tl.pressed ? PAL.floorLine : PAL.floorTop;
-            if (!tl.pressed) ctx.fillRect(x + 6, y + 53, 20, 2);
-            ctx.fillStyle = PAL.floorLine;
-            ctx.fillRect(x + 6, y + (tl.pressed ? 56 : 55), 20, 1);
+            this.floor(ctx, x, y, wc, wr, level);
+            if (tl.pressed) {
+              // Sunk flush with the floor: just its outline shows.
+              ctx.fillStyle = PAL.floorMid;
+              ctx.fillRect(x + 6, y + 53, 21, 2);
+              ctx.fillStyle = PAL.floorLine;
+              ctx.fillRect(x + 6, y + 55, 21, 1);
+            } else {
+              // A raised stone plate with its own lit top and front edge.
+              ctx.fillStyle = PAL.floorEdge;
+              ctx.fillRect(x + 7, y + 51, 20, 1);
+              ctx.fillStyle = PAL.floorTop;
+              ctx.fillRect(x + 6, y + 52, 20, 1);
+              ctx.fillStyle = PAL.floorFront;
+              ctx.fillRect(x + 6, y + 53, 20, 2);
+              ctx.fillStyle = PAL.floorLine;
+              ctx.fillRect(x + 6, y + 55, 21, 1);
+              ctx.fillRect(x + 26, y + 52, 1, 3);
+            }
             break;
           case T.POTION:
             this.potion(ctx, x, y, tl.kind, wc);
@@ -362,18 +459,21 @@ export class Renderer {
     }
   }
 
-  spikes(ctx, x, y, ext) {
+  // Two rows of blades: the back row behind the characters, the front row in
+  // front of them (so a victim is drawn impaled between the rows).
+  spikes(ctx, x, y, ext, front) {
     const h = [0, 3, 6, 9, 11, 12][ext];
-    const Y = y + 55;
-    for (const sx of [4, 9, 15, 20, 26]) {
+    const Y = y + (front ? 56 : 52);
+    for (const sx of front ? [3, 10, 17, 24] : [7, 14, 21, 28]) {
+      ctx.fillStyle = PAL.floorLine;
+      ctx.fillRect(x + sx, Y, 2, 1);
+      if (!h) continue;
       ctx.fillStyle = PAL.spike;
-      ctx.fillRect(x + sx, Y - 1, 1, 1);
-      if (h) {
-        ctx.fillRect(x + sx, Y - h, 1, h);
-        ctx.fillRect(x + sx + 1, Y - h + 3, 1, h - 3);
-        ctx.fillStyle = PAL.spikeTip;
-        ctx.fillRect(x + sx, Y - h, 1, 1);
-      }
+      ctx.fillRect(x + sx, Y - h, 1, h);
+      ctx.fillStyle = PAL.pillarLo;
+      ctx.fillRect(x + sx + 1, Y - h + 3, 1, h - 3);
+      ctx.fillStyle = PAL.spikeTip;
+      ctx.fillRect(x + sx, Y - h, 1, 1);
     }
   }
 
@@ -455,6 +555,13 @@ export class Renderer {
       const p = game.prince;
       if (visible(p.x, p.y) && !(p.state === 'exit' && p.t > 12)) {
         this.sprites.draw(ctx, princeJoints(p), 'prince', p.armed, ox, oy);
+      }
+    }
+    ctx.drawImage(this.foreground(level, rx, ry), 0, 0);
+    for (let r = 0; r < ROOM_ROWS; r++) {
+      for (let c = 0; c < ROOM_COLS; c++) {
+        const tl = level.tile(rx * ROOM_COLS + c, ry * ROOM_ROWS + r);
+        if (tl.t === T.SPIKES) this.spikes(ctx, c * TILE_W, r * TILE_H, tl.ext, true);
       }
     }
     this.gates(ctx, level, rx, ry);
