@@ -2,23 +2,30 @@ import { SCREEN_W, SCREEN_H, TILE_W, TILE_H, ROOM_COLS, ROOM_ROWS, ROOM_W, ROOM_
 import { T } from './level.js';
 import { princeJoints, guardJoints } from './figure.js';
 import { drawText } from './font.js';
+import { SpriteRasterizer } from './sprite.js';
 
 // A small VGA-style palette for the blue dungeon.
 const PAL = {
-  bg: '#1c2656',
-  bgMortar: '#111838',
-  bgHi: '#28346c',
-  bgLo: '#18204a',
-  block: '#4c5a98',
-  blockHi: '#7483c0',
-  blockLo: '#2c3668',
-  floorTop: '#8e9cd6',
-  floorFront: '#5664a2',
-  floorLine: '#2a3264',
-  pillar: '#6a78b6',
-  pillarHi: '#a0acdf',
-  pillarLo: '#3e4a88',
-  metal: '#6a5434',
+  bg: '#2e3660',
+  bgLight: '#363e6c',
+  bgDark: '#282f56',
+  bgHi: '#404a7e',
+  bgLo: '#1e2448',
+  bgMortar: '#10142c',
+  block: '#6c78ac',
+  blockHi: '#a4ace0',
+  blockLo: '#3c4478',
+  blockMark: '#56629a',
+  floorTop: '#c0c6ec',
+  floorMid: '#9098cc',
+  floorFront: '#5c6498',
+  floorLine: '#14183a',
+  pillar: '#7884bc',
+  pillarHi: '#a8b0e0',
+  pillarShine: '#d4d8f4',
+  pillarLo: '#444e88',
+  metal: '#4c3c2c',
+  metalHi: '#8c7050',
   flame: ['#fc5454', '#fca854', '#fcfc54'],
   spike: '#c8c8dc',
   spikeTip: '#fcfcfc',
@@ -39,40 +46,10 @@ const PAL = {
   text: '#fcfcfc',
 };
 
-const PRINCE_LOOK = { cloth: '#f4f4f4', dark: '#a4a4c0', skin: '#e0a070', hair: '#2a1a10', turban: null, belt: null };
-const GUARD_LOOK = { cloth: '#6a7ce0', dark: '#34409a', skin: '#c88050', hair: '#2a1a10', turban: '#e8e8e8', belt: '#fcd454' };
-
 function hash(a, b, c = 0) {
   let h = (a * 374761393 + b * 668265263 + c * 2147483647) | 0;
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   return (h ^ (h >>> 16)) >>> 0;
-}
-
-// Thick pixel line (Bresenham with a square brush).
-function line(ctx, ax, ay, bx, by, w) {
-  let x0 = Math.round(ax);
-  let y0 = Math.round(ay);
-  const x1 = Math.round(bx);
-  const y1 = Math.round(by);
-  const dx = Math.abs(x1 - x0);
-  const dy = -Math.abs(y1 - y0);
-  const sx = x0 < x1 ? 1 : -1;
-  const sy = y0 < y1 ? 1 : -1;
-  const o = w >> 1;
-  let err = dx + dy;
-  for (;;) {
-    ctx.fillRect(x0 - o, y0 - o, w, w);
-    if (x0 === x1 && y0 === y1) break;
-    const e2 = 2 * err;
-    if (e2 >= dy) {
-      err += dy;
-      x0 += sx;
-    }
-    if (e2 <= dx) {
-      err += dx;
-      y0 += sy;
-    }
-  }
 }
 
 export class Renderer {
@@ -83,6 +60,7 @@ export class Renderer {
     this.cache.height = ROOM_H;
     this.cacheKey = '';
     this.frame = 0;
+    this.sprites = new SpriteRasterizer();
   }
 
   // ---- static room layer ---------------------------------------------------
@@ -142,110 +120,159 @@ export class Renderer {
     return this.cache;
   }
 
+  // Background stonework: four courses of bricks of uneven width, each brick
+  // bevelled light on top/left and dark on bottom/right, like the DOS dungeon.
   backWall(ctx, x, y, c, r) {
-    ctx.fillStyle = PAL.bg;
+    ctx.fillStyle = PAL.bgMortar;
     ctx.fillRect(x, y, TILE_W, TILE_H);
-    for (let i = 0; i < 7; i++) {
-      const by = y + i * 9;
-      const off = (i + r * 7) & 1 ? 8 : 0;
-      for (let j = -1; j < 2; j++) {
-        const bx = x + off + j * 16;
-        const h = hash(c * 4 + j, r * 8 + i);
-        if (h % 9 === 0) {
-          ctx.fillStyle = PAL.bgHi;
-          ctx.fillRect(Math.max(x, bx + 1), by, Math.min(15, x + TILE_W - bx - 1), 8);
-        } else if (h % 11 === 0) {
-          ctx.fillStyle = PAL.bgLo;
-          ctx.fillRect(Math.max(x, bx + 1), by, Math.min(15, x + TILE_W - bx - 1), 8);
-        }
+    let yy = y;
+    for (let i = 0; i < 4; i++) {
+      const h = i === 3 ? 15 : 16;
+      let bx = -(hash(c, r, i) % 14);
+      let j = 0;
+      while (bx < TILE_W) {
+        const w = 11 + (hash(c + 17, r * 4 + i, j) % 9);
+        const a = Math.max(0, bx + 1);
+        const b = Math.min(TILE_W, bx + w);
+        if (b > a) this.brick(ctx, x + a, yy + 1, b - a, h - 1, hash(c * 5 + j, r * 4 + i, 7), bx + 1 >= 0, bx + w <= TILE_W);
+        bx += w;
+        j++;
       }
-      ctx.fillStyle = PAL.bgMortar;
-      ctx.fillRect(x, by + 8, TILE_W, 1);
-      ctx.fillRect(x + off, by, 1, 8);
-      ctx.fillRect(x + off + 16, by, 1, 8);
+      yy += h;
     }
   }
 
+  brick(ctx, x, y, w, h, seed, leftEdge, rightEdge) {
+    const tone = seed % 7;
+    ctx.fillStyle = tone === 0 ? PAL.bgLight : tone === 1 ? PAL.bgDark : PAL.bg;
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = PAL.bgHi;
+    ctx.fillRect(x, y, w, 1);
+    if (leftEdge) ctx.fillRect(x, y, 1, h);
+    ctx.fillStyle = PAL.bgLo;
+    ctx.fillRect(x, y + h - 1, w, 1);
+    if (rightEdge) ctx.fillRect(x + w - 1, y + 1, 1, h - 1);
+    if (seed % 3 === 0 && w > 6) ctx.fillRect(x + 2 + ((seed >> 4) % (w - 5)), y + 3 + ((seed >> 8) % (h - 6)), 2, 1);
+  }
+
+  // Solid masonry: large bevelled stones with weathering marks.
   wallBlock(ctx, x, y, c, r, level) {
-    ctx.fillStyle = PAL.block;
+    ctx.fillStyle = PAL.floorLine;
     ctx.fillRect(x, y, TILE_W, TILE_H);
     for (let i = 0; i < 3; i++) {
       const by = y + i * 21;
-      const split = (i + r + c) & 1;
-      const segs = split ? [[0, 16], [16, 32]] : [[0, 32]];
+      const segs = (i + r + c) & 1 ? [[0, 16], [16, 32]] : [[0, 32]];
       for (const [a, b] of segs) {
-        const w = b - a;
+        const sx = x + a;
+        const w = b - a - 1;
+        ctx.fillStyle = PAL.block;
+        ctx.fillRect(sx, by, w, 20);
         ctx.fillStyle = PAL.blockHi;
-        ctx.fillRect(x + a, by, w, 1);
-        ctx.fillRect(x + a, by, 1, 20);
+        ctx.fillRect(sx, by, w, 1);
+        ctx.fillRect(sx, by, 1, 20);
         ctx.fillStyle = PAL.blockLo;
-        ctx.fillRect(x + a, by + 20, w, 1);
-        ctx.fillRect(x + b - 1, by + 1, 1, 20);
-        if (hash(c, r, i + a) % 4 === 0) {
-          ctx.fillRect(x + a + 4 + (hash(c, i) % (w - 8)), by + 6, 2, 1);
+        ctx.fillRect(sx, by + 18, w, 2);
+        ctx.fillRect(sx + w - 2, by + 1, 2, 19);
+        ctx.fillStyle = PAL.blockMark;
+        for (let k = 0; k < 3; k++) {
+          const h = hash(c * 3 + k, r * 3 + i, a);
+          if (h % 2) ctx.fillRect(sx + 2 + (h % (w - 6)), by + 3 + ((h >> 6) % 13), 1 + ((h >> 10) % 3), 1);
         }
       }
     }
-    // A lit top edge where the block meets open space above.
     if (level.tile(c, r - 1).t === T.EMPTY) {
       ctx.fillStyle = PAL.floorTop;
       ctx.fillRect(x, y, TILE_W, 2);
+      ctx.fillStyle = PAL.floorMid;
+      ctx.fillRect(x, y + 2, TILE_W, 1);
     }
   }
 
+  // A floor slab: a lit top surface, a darker front face and a hard shadow line.
   floor(ctx, x, y, c, r, level, dy = 0) {
-    const Y = y + 55 + dy;
+    const Y = y + 54 + dy;
     ctx.fillStyle = PAL.floorTop;
-    ctx.fillRect(x, Y, TILE_W, 3);
+    ctx.fillRect(x, Y, TILE_W, 2);
+    ctx.fillStyle = PAL.floorMid;
+    ctx.fillRect(x, Y + 2, TILE_W, 2);
     ctx.fillStyle = PAL.floorFront;
-    ctx.fillRect(x, Y + 3, TILE_W, 5);
+    ctx.fillRect(x, Y + 4, TILE_W, 4);
     ctx.fillStyle = PAL.floorLine;
-    ctx.fillRect(x, Y + 3, TILE_W, 1);
-    ctx.fillRect(x, Y + 7, TILE_W, 1);
-    ctx.fillRect(x + TILE_W - 1, Y + 3, 1, 5);
-    if (level.tile(c - 1, r).t === T.EMPTY) ctx.fillRect(x, Y, 1, 8);
-    if (level.tile(c + 1, r).t === T.EMPTY) ctx.fillRect(x + TILE_W - 1, Y, 1, 8);
+    ctx.fillRect(x, Y + 8, TILE_W, 1);
+    ctx.fillRect(x + TILE_W - 1, Y + 4, 1, 4);
+    ctx.fillStyle = PAL.floorMid;
+    for (let k = 0; k < 3; k++) {
+      const h = hash(c, r, k + 40);
+      ctx.fillRect(x + (h % 30), Y + (h >> 5) % 2, 2, 1);
+    }
+    if (level.tile(c - 1, r).t === T.EMPTY) {
+      ctx.fillStyle = PAL.floorLine;
+      ctx.fillRect(x, Y + 1, 1, 8);
+    }
+    if (level.tile(c + 1, r).t === T.EMPTY) {
+      ctx.fillStyle = PAL.floorFront;
+      ctx.fillRect(x + TILE_W - 3, Y + 1, 3, 7);
+      ctx.fillStyle = PAL.floorLine;
+      ctx.fillRect(x + TILE_W - 1, Y, 1, 9);
+    }
   }
 
+  // A round column, lit from the left, with a capital and a base.
   pillar(ctx, x, y) {
+    const px = x + 10;
     ctx.fillStyle = PAL.pillar;
-    ctx.fillRect(x + 10, y + 6, 12, 49);
+    ctx.fillRect(px, y + 7, 12, 43);
     ctx.fillStyle = PAL.pillarHi;
-    ctx.fillRect(x + 11, y + 6, 2, 49);
-    ctx.fillRect(x + 8, y + 1, 16, 4);
-    ctx.fillRect(x + 8, y + 50, 16, 5);
+    ctx.fillRect(px + 2, y + 7, 3, 43);
+    ctx.fillStyle = PAL.pillarShine;
+    ctx.fillRect(px + 3, y + 7, 1, 43);
     ctx.fillStyle = PAL.pillarLo;
-    ctx.fillRect(x + 19, y + 6, 3, 44);
-    ctx.fillRect(x + 8, y + 5, 16, 1);
-    ctx.fillRect(x + 8, y + 50, 16, 1);
+    ctx.fillRect(px + 9, y + 7, 3, 43);
+    ctx.fillRect(px, y + 7, 1, 43);
+    for (const [cy, rows] of [[y + 1, [PAL.pillarHi, PAL.pillarShine, PAL.pillar, PAL.pillar, PAL.pillarLo, PAL.floorLine]], [y + 48, [PAL.floorLine, PAL.pillarHi, PAL.pillar, PAL.pillar, PAL.pillarLo, PAL.pillarLo]]]) {
+      rows.forEach((col, i) => {
+        ctx.fillStyle = col;
+        ctx.fillRect(x + 7, cy + i, 18, 1);
+      });
+    }
   }
 
   sconce(ctx, x, y) {
     ctx.fillStyle = PAL.metal;
-    ctx.fillRect(x + 15, y + 22, 2, 7);
-    ctx.fillRect(x + 13, y + 20, 6, 2);
-    ctx.fillRect(x + 14, y + 29, 4, 1);
+    ctx.fillRect(x + 13, y + 21, 6, 3);
+    ctx.fillRect(x + 15, y + 24, 2, 8);
+    ctx.fillRect(x + 13, y + 31, 6, 2);
+    ctx.fillStyle = PAL.metalHi;
+    ctx.fillRect(x + 13, y + 21, 6, 1);
+    ctx.fillRect(x + 15, y + 24, 1, 8);
   }
 
   flame(ctx, x, y, seed) {
     const h = hash(seed, this.frame);
-    const tall = 5 + (h % 4);
-    const lean = (h >> 3) % 3 - 1;
+    const tall = 10 + (h % 5);
+    const lean = ((h >> 3) % 5) - 2;
     const cx = x + 16;
-    const base = y + 19;
+    const base = y + 20;
     for (let i = 0; i < tall; i++) {
-      const w = Math.max(1, Math.round(((tall - i) / tall) * 5));
-      const sx = cx - (w >> 1) + (i > tall / 2 ? lean : 0);
+      const k = i / tall;
+      const w = Math.max(1, Math.round(7 * Math.pow(1 - k, 0.75) * (i < 2 ? 0.8 : 1)));
+      const sx = Math.round(cx - w / 2 + lean * k * k);
       ctx.fillStyle = PAL.flame[0];
       ctx.fillRect(sx, base - i, w, 1);
       if (w > 2) {
         ctx.fillStyle = PAL.flame[1];
         ctx.fillRect(sx + 1, base - i, w - 2, 1);
       }
-      if (w > 3 && i < tall / 2) {
+      if (w > 4 && k < 0.55) {
         ctx.fillStyle = PAL.flame[2];
-        ctx.fillRect(sx + 2, base - i, w - 4 || 1, 1);
+        ctx.fillRect(sx + 2, base - i, w - 4, 1);
       }
+    }
+    ctx.fillStyle = '#fcfcfc';
+    ctx.fillRect(cx - 1, base - 2, 2, 2);
+    if (h % 4 === 0) {
+      ctx.fillStyle = PAL.flame[2];
+      ctx.fillRect(cx + lean + ((h >> 7) % 3) - 1, base - tall - 2 - ((h >> 9) % 3), 1, 1);
     }
   }
 
@@ -310,11 +337,13 @@ export class Renderer {
             this.potion(ctx, x, y, tl.kind, wc);
             break;
           case T.SWORD:
+            ctx.fillStyle = PAL.floorLine;
+            ctx.fillRect(x + 4, y + 51, 23, 3);
             ctx.fillStyle = PAL.steel;
-            ctx.fillRect(x + 10, y + 53, 16, 1);
+            ctx.fillRect(x + 10, y + 52, 16, 1);
             ctx.fillStyle = PAL.gold;
-            ctx.fillRect(x + 8, y + 52, 1, 3);
-            ctx.fillRect(x + 5, y + 53, 3, 1);
+            ctx.fillRect(x + 8, y + 51, 1, 3);
+            ctx.fillRect(x + 5, y + 52, 3, 1);
             if (this.frame % 24 < 2) {
               ctx.fillStyle = '#fff';
               ctx.fillRect(x + 12 + (this.frame % 24) * 6, y + 52, 1, 1);
@@ -405,85 +434,6 @@ export class Renderer {
 
   // ---- characters ----------------------------------------------------------
 
-  figure(ctx, J, look, armed, ox, oy) {
-    const d = J.dir;
-    const P = (p) => [p[0] - ox, p[1] - oy];
-    const seg = (a, b, w) => {
-      const [ax, ay] = P(a);
-      const [bx, by] = P(b);
-      line(ctx, ax, ay, bx, by, w);
-    };
-    const foot = (f) => {
-      const [fx, fy] = P(f);
-      ctx.fillRect(Math.round(fx) - (d < 0 ? 2 : 0), Math.round(fy), 3, 1);
-    };
-    const hand = (w) => {
-      const [wx, wy] = P(w);
-      ctx.fillRect(Math.round(wx) - 1, Math.round(wy) - 1, 2, 2);
-    };
-
-    // far limbs
-    ctx.fillStyle = look.dark;
-    seg(J.hip, J.k2, 4);
-    seg(J.k2, J.f2, 3);
-    seg(J.sh, J.e2, 2);
-    seg(J.e2, J.w2, 2);
-    ctx.fillStyle = look.skin;
-    foot(J.f2);
-    hand(J.w2);
-
-    // body
-    ctx.fillStyle = look.cloth;
-    seg(J.hip, J.sh, 6);
-    if (look.belt) {
-      ctx.fillStyle = look.belt;
-      const [hx, hy] = P(J.hip);
-      ctx.fillRect(Math.round(hx) - 2, Math.round(hy) - 2, 5, 1);
-    }
-    ctx.fillStyle = look.skin;
-    seg(J.sh, J.neck, 2);
-
-    // near leg
-    ctx.fillStyle = look.cloth;
-    seg(J.hip, J.k1, 4);
-    seg(J.k1, J.f1, 3);
-    ctx.fillStyle = look.skin;
-    foot(J.f1);
-
-    // head
-    const [hx, hy] = P(J.head);
-    const X = Math.round(hx);
-    const Y = Math.round(hy);
-    ctx.fillStyle = look.skin;
-    ctx.fillRect(X - 2, Y - 3, 5, 7);
-    ctx.fillRect(d > 0 ? X + 3 : X - 3, Y, 1, 2);
-    ctx.fillStyle = look.hair;
-    ctx.fillRect(X - 2, Y - 4, 5, 2);
-    ctx.fillRect(d > 0 ? X - 3 : X + 3, Y - 3, 1, 5);
-    if (look.turban) {
-      ctx.fillStyle = look.turban;
-      ctx.fillRect(X - 3, Y - 6, 7, 3);
-      ctx.fillStyle = PAL.red;
-      ctx.fillRect(X, Y - 7, 1, 1);
-    }
-
-    // near arm and sword
-    ctx.fillStyle = look.cloth;
-    seg(J.sh, J.e1, 2);
-    seg(J.e1, J.w1, 2);
-    if (armed && J.sword != null) {
-      const [wx, wy] = P(J.w1);
-      const vx = Math.cos(J.sword) * d;
-      const vy = Math.sin(J.sword);
-      ctx.fillStyle = PAL.steel;
-      line(ctx, wx + vx * 2, wy + vy * 2, wx + vx * 16, wy + vy * 16, 1);
-      ctx.fillStyle = PAL.gold;
-      line(ctx, wx - vy * 2, wy + vx * 2, wx + vy * 2, wy - vx * 2, 1);
-    }
-    ctx.fillStyle = look.skin;
-    hand(J.w1);
-  }
-
   // ---- screens -------------------------------------------------------------
 
   drawRoom(game, rx, ry, withChars = true) {
@@ -500,11 +450,11 @@ export class Renderer {
       const oy = ry * ROOM_H;
       const visible = (x, y) => x > ox - 30 && x < ox + ROOM_W + 30 && y > oy - 10 && y < oy + ROOM_H + 60;
       for (const g of game.guards) {
-        if (visible(g.x, g.y)) this.figure(ctx, guardJoints(g), GUARD_LOOK, g.alive, ox, oy);
+        if (visible(g.x, g.y)) this.sprites.draw(ctx, guardJoints(g), 'guard', g.alive, ox, oy);
       }
       const p = game.prince;
       if (visible(p.x, p.y) && !(p.state === 'exit' && p.t > 12)) {
-        this.figure(ctx, princeJoints(p), PRINCE_LOOK, p.armed, ox, oy);
+        this.sprites.draw(ctx, princeJoints(p), 'prince', p.armed, ox, oy);
       }
     }
     this.gates(ctx, level, rx, ry);

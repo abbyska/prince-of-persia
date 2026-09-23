@@ -21,7 +21,8 @@ desktops.
 - **Classic status bar:** red health triangles, the guard's blue triangles, and
   a 60-minute time limit.
 - **PC-speaker style sound effects.**
-- **Movement is drawn from a posed skeleton.** Poses blend smoothly for a
+- **Hand-built pixel sprites in the original's style:** baggy trousers, rim
+  shading and outlines, drawn from a posed skeleton so moves blend smoothly for a
   rotoscope-like look. No original art or sprites are used.
 
 ## Controls
@@ -61,6 +62,7 @@ npm run build    # production build in dist/
 | `src/guard.js` | Guard behaviour |
 | `src/game.js` | Rules, timer and fight resolution; no DOM, so tests can run it |
 | `src/figure.js` | Skeleton poses and blending between them |
+| `src/sprite.js` | Turns a pose into a shaded pixel sprite (Prince and guard) |
 | `src/render.js` | Pixel renderer for the 320×200 screen |
 | `src/input.js` | Keyboard and multi-touch controls |
 | `src/audio.js` | PC-speaker style sound effects |
