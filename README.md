@@ -9,11 +9,10 @@ desktops.
 - **Smooth graphics at full resolution.** The game keeps the original's 320×200
   layout, 10×3-tile rooms and 4:3 screen shape, but draws everything with
   smooth shapes at your screen's real resolution rather than chunky pixels.
-- **Depth like the original.** Floors are slabs seen from slightly above, with a
-  top surface that recedes towards the back wall, a front edge, and angled ends
-  where they drop away. Stone blocks show a top and a side face. Slabs and
-  blocks cast soft shadows, torches glow on the walls, and characters cast a
-  shadow on the floor.
+- **Depth like the original.** Open space is black with only faint outlines of
+  masonry; platforms and walls are slate-blue dressed stone. Floors have a thick
+  top surface whose left end slants back, and blocks, slabs and pillars show a
+  dark, checkered side face on the right, as in the 1989 game.
 - **Layers.** The Prince passes behind pillars, and when he hangs from a ledge,
   its front edge covers his hands. The front row of spikes is in front of him.
 - **One room per screen.** The camera cuts from room to room, as in the original.

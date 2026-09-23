@@ -16,21 +16,23 @@ const SKEW = 7;
 const FONT = "'Cinzel', 'Trajan Pro', Georgia, 'Times New Roman', serif";
 
 const C = {
-  mortar: '#131730',
-  brick: ['#394170', '#333b68', '#414a7c', '#2e3560'],
-  stone: ['#6773ab', '#606ca4', '#6f7bb2'],
-  topBack: '#6a73a8',
-  topFront: '#cfd4f2',
-  topEdge: '#f0f2fe',
-  front: ['#6a73a8', '#363d6c'],
-  side: ['#4a5388', '#23284c'],
-  line: '#10132a',
-  pillar: ['#353d70', '#aab2e4', '#e2e5fa', '#6c76ae', '#262c58'],
+  void: '#000000',
+  mark: '#22305a',
+  mortar: '#1e2844',
+  stone: ['#7280a0', '#6b7999', '#7a88a8'],
+  stoneHi: '#a4b1cc',
+  stoneLo: '#2f3b5a',
+  stoneSpeck: '#4b597b',
+  top: '#5d6b8c',
+  topBack: '#3e4a68',
+  topEdge: '#8c9aba',
+  side: '#26305a',
+  sideDark: '#0e1428',
   flame: ['#fff6c0', '#ffc040', '#ff6a1a', 'rgba(200,30,0,0)'],
   gold: '#f0c850',
   text: '#f2ead2',
   dimText: '#aab0d4',
-  hp: '#ff4a4a',
+  hp: '#ff3a2a',
   guardHp: '#5c86ff',
 };
 
@@ -72,28 +74,19 @@ export class Renderer {
     this.sx = this.canvas.width / SCREEN_W;
     this.sy = this.canvas.height / SCREEN_H;
     this.layers = {};
-    const g = document.createElement('canvas');
-    g.width = g.height = 96;
-    const gc = g.getContext('2d');
-    for (let i = 0; i < 1400; i++) {
-      gc.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.12)';
-      gc.fillRect(Math.random() * 96, Math.random() * 96, 1, 1);
-    }
-    this.grainCanvas = g;
+    // Checkerboard used on the dark side faces, sized to about one original pixel.
+    const cell = Math.max(1, Math.round(this.sx * 0.9));
+    const d = document.createElement('canvas');
+    d.width = d.height = cell * 2;
+    const dc = d.getContext('2d');
+    dc.fillStyle = C.sideDark;
+    dc.fillRect(0, 0, cell, cell);
+    dc.fillRect(cell, cell, cell, cell);
+    this.ditherCanvas = d;
   }
 
   logical(ctx) {
     ctx.setTransform(this.sx, 0, 0, this.sy, 0, 0);
-  }
-
-  grain(ctx) {
-    const p = ctx.createPattern(this.grainCanvas, 'repeat');
-    try {
-      p.setTransform(new DOMMatrix([1 / this.sx, 0, 0, 1 / this.sy, 0, 0]));
-    } catch {
-      // Older browsers: the grain is just coarser.
-    }
-    return p;
   }
 
   // A cached, transparent full-room layer, redrawn only when its key changes.
@@ -127,30 +120,26 @@ export class Renderer {
   // ---- static background ---------------------------------------------------
 
   drawBackground(ctx, level, rx, ry) {
-    const grain = this.grain(ctx);
     this.eachTile(rx, ry, (c, r, x, y) => {
-      if (level.isWall(c, r)) this.wallFace(ctx, x, y, c, r, grain);
-      else this.backWall(ctx, x, y, c, r, grain);
-    });
-    this.eachTile(rx, ry, (c, r, x, y) => {
-      if (!level.isWall(c, r)) this.wallShadows(ctx, x, y, c, r, level);
+      if (level.isWall(c, r)) this.wallFace(ctx, x, y, c, r);
+      else this.backWall(ctx, x, y, c, r);
     });
     this.eachTile(rx, ry, (c, r, x, y) => {
       const tl = level.tile(c, r);
       switch (tl.t) {
         case T.WALL:
-          this.wallDepth(ctx, x, y, c, r, level, grain);
+          this.wallDepth(ctx, x, y, c, r, level);
           break;
         case T.TORCH:
           this.sconce(ctx, x, y);
-          this.floor(ctx, x, y, c, r, level, grain);
+          this.floor(ctx, x, y, c, r, level);
           break;
         case T.EXIT:
-          if (tl.half === 0) this.exitFrame(ctx, x, y, grain);
-          this.floor(ctx, x, y, c, r, level, grain);
+          if (tl.half === 0) this.exitFrame(ctx, x, y);
+          this.floor(ctx, x, y, c, r, level);
           break;
         case T.RUBBLE:
-          this.floor(ctx, x, y, c, r, level, grain);
+          this.floor(ctx, x, y, c, r, level);
           this.rubble(ctx, x, y, c, r);
           break;
         case T.FLOOR:
@@ -159,255 +148,229 @@ export class Renderer {
         case T.SWORD:
         case T.SPIKES:
         case T.GATE:
-          this.floor(ctx, x, y, c, r, level, grain);
+          this.floor(ctx, x, y, c, r, level);
           break;
       }
     });
   }
 
-  brickFace(ctx, x, y, w, h, base, left, right) {
-    ctx.fillStyle = base;
-    ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = vgrad(ctx, y, y + h, ['rgba(255,255,255,0.10)', 'rgba(0,0,0,0)', 'rgba(0,0,0,0.25)']);
-    ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = 'rgba(190,200,255,0.30)';
-    ctx.fillRect(x, y, w, 0.6);
-    if (left) ctx.fillRect(x, y, 0.6, h);
-    ctx.fillStyle = 'rgba(5,6,20,0.5)';
-    ctx.fillRect(x, y + h - 0.7, w, 0.7);
-    if (right) ctx.fillRect(x + w - 0.7, y, 0.7, h);
-  }
-
-  // Back wall: four courses of bricks of uneven width.
-  backWall(ctx, x, y, c, r, grain) {
-    ctx.fillStyle = C.mortar;
+  // Open space behind the platforms is dark, with only a faint dotted outline
+  // of masonry here and there, as in the original.
+  backWall(ctx, x, y, c, r) {
+    ctx.fillStyle = C.void;
     ctx.fillRect(x, y, TILE_W, TILE_H);
-    const h = TILE_H / 4;
-    for (let i = 0; i < 4; i++) {
-      const yy = y + i * h;
-      let bx = -(hash(c, r, i) % 14);
-      let j = 0;
-      while (bx < TILE_W) {
-        const w = 11 + (hash(c + 17, r * 4 + i, j) % 9);
-        const a = Math.max(0, bx + 0.5);
-        const b = Math.min(TILE_W, bx + w - 0.5);
-        if (b > a) {
-          const tone = C.brick[hash(c * 5 + j, r * 4 + i, 7) % C.brick.length];
-          this.brickFace(ctx, x + a, yy + 0.5, b - a, h - 1, tone, bx >= 0, bx + w <= TILE_W);
-        }
-        bx += w;
-        j++;
-      }
+    const h = hash(c, r, 5);
+    if (h % 7 !== 0) return;
+    const bx = x + 5 + (h % 10);
+    const by = y + 8 + ((h >>> 4) % 18);
+    ctx.strokeStyle = C.mark;
+    ctx.lineWidth = 0.6;
+    ctx.setLineDash([0.9, 1.1]);
+    ctx.beginPath();
+    for (const [x0, y0, x1, y1] of [
+      [0, 0, 16, 0], [-4, 5, 20, 5], [2, 10, 14, 10],
+      [8, -3, 8, 5], [2, 5, 2, 10], [13, 5, 13, 13],
+    ]) {
+      ctx.moveTo(bx + x0, by + y0);
+      ctx.lineTo(bx + x1, by + y1);
     }
-    ctx.fillStyle = grain;
-    ctx.fillRect(x, y, TILE_W, TILE_H);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 
-  // Soft shadows on the back wall: under the slab above, beside stone blocks
-  // and pillars, and a contact shadow where the floor meets the wall.
-  wallShadows(ctx, x, y, c, r, level) {
-    if (level.hasFloor(c, r - 1)) {
-      ctx.fillStyle = vgrad(ctx, y, y + 18, ['rgba(0,0,8,0.65)', 'rgba(0,0,8,0)']);
-      ctx.fillRect(x, y, TILE_W, 18);
-    }
-    if (level.isWall(c - 1, r)) {
-      ctx.fillStyle = hgrad(ctx, x, x + 18, ['rgba(0,0,8,0.6)', 'rgba(0,0,8,0)']);
-      ctx.fillRect(x, y, 18, TILE_H);
-    }
-    if (level.tile(c, r).t === T.PILLAR) {
-      ctx.fillStyle = hgrad(ctx, x + 20, x + 32, ['rgba(0,0,8,0.45)', 'rgba(0,0,8,0)']);
-      ctx.fillRect(x + 20, y, 12, SLAB_TOP);
-    }
-    if (level.hasFloor(c, r)) {
-      ctx.fillStyle = vgrad(ctx, y + SLAB_TOP - 12, y + SLAB_TOP, ['rgba(0,0,8,0)', 'rgba(0,0,8,0.45)']);
-      ctx.fillRect(x, y + SLAB_TOP - 12, TILE_W, 12);
-    }
-  }
-
-  stoneFace(ctx, x, y, w, h, seed, grain) {
+  // One dressed stone: flat slate face, lit top-left edge, dark bottom-right
+  // edge and a few chisel marks.
+  stoneFace(ctx, x, y, w, h, seed) {
     ctx.fillStyle = C.stone[seed % C.stone.length];
     ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = vgrad(ctx, y, y + h, ['rgba(255,255,255,0.14)', 'rgba(0,0,0,0)', 'rgba(0,0,20,0.3)']);
-    ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = 'rgba(225,230,255,0.55)';
-    ctx.fillRect(x, y, w, 0.8);
-    ctx.fillRect(x, y, 0.8, h);
-    ctx.fillStyle = 'rgba(10,12,40,0.6)';
-    ctx.fillRect(x, y + h - 1.2, w, 1.2);
-    ctx.fillRect(x + w - 1.2, y, 1.2, h);
-    ctx.fillStyle = 'rgba(20,24,60,0.35)';
+    ctx.fillStyle = C.stoneHi;
+    ctx.fillRect(x, y, w, 0.9);
+    ctx.fillRect(x, y, 0.9, h);
+    ctx.fillStyle = C.stoneLo;
+    ctx.fillRect(x, y + h - 1.1, w, 1.1);
+    ctx.fillRect(x + w - 1.1, y, 1.1, h);
+    ctx.fillStyle = C.stoneSpeck;
     for (let k = 0; k < 3; k++) {
       const s = hash(seed, k, 3);
-      if (s % 2) {
-        ctx.beginPath();
-        ctx.ellipse(x + 3 + (s % (w - 6)), y + 3 + ((s >>> 6) % (h - 6)), 1 + ((s >>> 10) % 3), 0.6, 0, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      if (s % 3 === 0 || w < 6 || h < 5) continue;
+      const px = x + 2 + (s % Math.max(1, w - 5));
+      const py = y + 2 + ((s >>> 6) % Math.max(1, h - 4));
+      ctx.fillRect(px, py, 1.2, 0.7);
+      ctx.fillRect(px + 1.2, py + 0.7, 0.7, 0.7);
     }
-    ctx.fillStyle = grain;
-    ctx.fillRect(x, y, w, h);
   }
 
-  // Solid masonry, front face: three courses of large stones.
-  wallFace(ctx, x, y, c, r, grain) {
-    ctx.fillStyle = C.line;
+  // A course of stones of uneven width, cut to [x, x + TILE_W).
+  course(ctx, x, y, h, c, row) {
+    let bx = -(hash(c, row, 1) % 12);
+    let j = 0;
+    while (bx < TILE_W) {
+      const w = 13 + (hash(c + 7, row, j) % 9);
+      const a = Math.max(0, bx);
+      const b = Math.min(TILE_W, bx + w);
+      if (b - a > 0.5) this.stoneFace(ctx, x + a + 0.4, y + 0.4, b - a - 0.8, h - 0.8, hash(c * 5 + j, row, 9));
+      bx += w;
+      j++;
+    }
+  }
+
+  // Solid masonry: three courses of large stones.
+  wallFace(ctx, x, y, c, r) {
+    ctx.fillStyle = C.mortar;
     ctx.fillRect(x, y, TILE_W, TILE_H);
-    for (let i = 0; i < 3; i++) {
-      const by = y + i * 21;
-      const segs = (i + r + c) & 1 ? [[0, 16], [16, 32]] : [[0, 32]];
-      for (const [a, b] of segs) this.stoneFace(ctx, x + a + 0.4, by + 0.4, b - a - 0.8, 20.2, hash(c * 3 + a, r * 3 + i), grain);
-    }
+    for (let i = 0; i < 3; i++) this.course(ctx, x, y + i * 21, 21, c, r * 3 + i);
   }
 
-  // Top surface of a slab (floor or stone block), as a receding parallelogram.
-  topSurface(ctx, x, top, front, grain) {
+  // Top surface of a slab (floor or stone block): a flat slate band whose
+  // back edge is shifted right, so the left end of a platform slants back.
+  topSurface(ctx, x, top, front) {
     poly(ctx, [x, front], [x + TILE_W, front], [x + TILE_W + SKEW, top], [x + SKEW, top]);
-    ctx.fillStyle = vgrad(ctx, top, front, [C.topBack, '#9aa2d4', C.topFront]);
+    ctx.fillStyle = C.top;
     ctx.fill();
-    ctx.fillStyle = grain;
+    poly(ctx, [x + SKEW, top], [x + TILE_W + SKEW, top], [x + TILE_W + SKEW - 0.4, top + 1], [x + SKEW - 0.4, top + 1]);
+    ctx.fillStyle = C.topBack;
     ctx.fill();
   }
 
+  // The dark, dithered side of a block or slab, seen where it ends.
   sideFace(ctx, x, top, front, bottom) {
     poly(ctx, [x, front], [x + SKEW, top], [x + SKEW, bottom - (front - top)], [x, bottom]);
-    ctx.fillStyle = hgrad(ctx, x, x + SKEW, C.side);
+    ctx.fillStyle = C.side;
     ctx.fill();
-    ctx.strokeStyle = C.line;
-    ctx.lineWidth = 0.5;
-    ctx.stroke();
+    ctx.fillStyle = this.dither(ctx);
+    ctx.fill();
+  }
+
+  dither(ctx) {
+    const p = ctx.createPattern(this.ditherCanvas, 'repeat');
+    try {
+      p.setTransform(new DOMMatrix([1 / this.sx, 0, 0, 1 / this.sy, 0, 0]));
+    } catch {
+      // Without pattern transforms the checker is just finer.
+    }
+    return p;
   }
 
   // Stone block: top surface where open above, side face where open to the right.
-  wallDepth(ctx, x, y, c, r, level, grain) {
+  wallDepth(ctx, x, y, c, r, level) {
+    const depth = FRONT - SLAB_TOP;
     if (!level.hasFloor(c, r - 1)) {
-      this.topSurface(ctx, x, y - (FRONT - SLAB_TOP), y, grain);
+      this.topSurface(ctx, x, y - depth, y);
       ctx.fillStyle = C.topEdge;
-      ctx.fillRect(x, y - 0.4, TILE_W, 0.7);
+      ctx.fillRect(x, y - 0.5, TILE_W, 0.8);
     }
     if (!level.isWall(c + 1, r)) {
-      this.sideFace(ctx, x + TILE_W, y - (FRONT - SLAB_TOP), y, y + TILE_H);
-      ctx.strokeStyle = 'rgba(10,12,40,0.7)';
+      this.sideFace(ctx, x + TILE_W, y - depth, y, y + TILE_H);
+      ctx.strokeStyle = C.void;
       ctx.lineWidth = 0.6;
       for (const k of [21, 42]) {
         ctx.beginPath();
         ctx.moveTo(x + TILE_W, y + k);
-        ctx.lineTo(x + TILE_W + SKEW, y + k - (FRONT - SLAB_TOP));
+        ctx.lineTo(x + TILE_W + SKEW, y + k - depth);
         ctx.stroke();
       }
     }
   }
 
-  floor(ctx, x, y, c, r, level, grain, dy = 0) {
+  floor(ctx, x, y, c, r, level, dy = 0) {
     const top = y + SLAB_TOP + dy;
     const front = y + FRONT + dy;
-    this.topSurface(ctx, x, top, front, grain);
-    // Tile joint running back into the surface.
-    if (level.tile(c + 1, r).t !== T.EMPTY) {
-      ctx.strokeStyle = 'rgba(30,34,70,0.35)';
-      ctx.lineWidth = 0.5;
-      ctx.beginPath();
-      ctx.moveTo(x + TILE_W, front);
-      ctx.lineTo(x + TILE_W + SKEW, top);
-      ctx.stroke();
-    }
+    this.topSurface(ctx, x, top, front);
+    ctx.fillStyle = C.stoneSpeck;
     for (let k = 0; k < 3; k++) {
       const h = hash(c, r, k + 40);
-      ctx.fillStyle = 'rgba(40,46,90,0.25)';
-      ctx.beginPath();
-      ctx.ellipse(x + 4 + (h % 26), top + 3 + ((h >>> 5) % 6), 1.2, 0.4, 0, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.fillRect(x + 4 + (h % 26), top + 2 + ((h >>> 5) % 6), 1.2, 0.6);
     }
     this.floorFront(ctx, x, y + dy, c, r, level);
   }
 
-  // The slab's front face (and side face at a drop). Also drawn in the
-  // foreground so a hanging Prince's hands go behind the ledge's lip.
+  // The slab's front edge (and dark side face where it ends at a drop). Also
+  // drawn in the foreground so a hanging Prince's hands go behind the lip.
   floorFront(ctx, x, y, c, r, level) {
     const front = y + FRONT;
     const bottom = y + TILE_H;
-    ctx.fillStyle = vgrad(ctx, front, bottom, C.front);
+    ctx.fillStyle = C.mortar;
     ctx.fillRect(x, front, TILE_W, bottom - front);
+    this.stoneFace(ctx, x + 0.3, front + 0.3, TILE_W - 0.6, bottom - front - 0.6, hash(c, r, 21));
     ctx.fillStyle = C.topEdge;
-    ctx.fillRect(x, front - 0.35, TILE_W, 0.7);
-    ctx.fillStyle = C.line;
-    ctx.fillRect(x, bottom - 0.7, TILE_W, 0.7);
-    ctx.fillRect(x + TILE_W - 0.5, front + 0.5, 0.5, bottom - front - 1);
-    if (level.tile(c - 1, r).t === T.EMPTY) ctx.fillRect(x, front, 0.6, bottom - front);
+    ctx.fillRect(x, front - 0.4, TILE_W, 0.8);
     if (level.tile(c + 1, r).t === T.EMPTY) this.sideFace(ctx, x + TILE_W, y + SLAB_TOP, front, bottom);
   }
 
+  // A tapered iron cup on a short bracket.
   sconce(ctx, x, y) {
-    ctx.fillStyle = '#2a2018';
-    poly(ctx, [x + 12.5, y + 20], [x + 19.5, y + 20], [x + 18, y + 23.5], [x + 14, y + 23.5]);
+    poly(ctx, [x + 12.5, y + 20.5], [x + 19.5, y + 20.5], [x + 17, y + 31], [x + 15, y + 31]);
+    ctx.fillStyle = hgrad(ctx, x + 12.5, x + 19.5, ['#e4e8f4', '#9098b0', '#3a4058']);
     ctx.fill();
-    ctx.fillStyle = hgrad(ctx, x + 14.5, x + 17.5, ['#8a6c48', '#3a2c1c']);
-    ctx.fillRect(x + 14.8, y + 23.5, 2.4, 9);
-    ctx.fillRect(x + 13, y + 31.5, 6, 1.6);
+    ctx.fillStyle = '#2a3048';
+    ctx.fillRect(x + 12.5, y + 20.5, 7, 1);
   }
 
   rubble(ctx, x, y, c, r) {
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < 8; i++) {
       const h = hash(c, r, i);
-      const px = x + 4 + (h % 26);
-      const py = y + FRONT - 2 - ((h >>> 5) % 6);
-      const s = 1 + ((h >>> 8) % 3) * 0.6;
-      poly(ctx, [px, py], [px + s * 1.4, py - s], [px + s * 2.4, py - 0.2], [px + s * 1.2, py + s * 0.5]);
-      ctx.fillStyle = (h >>> 11) % 2 ? '#8b93c6' : '#5d6698';
+      const px = x + 3 + (h % 26);
+      const py = y + FRONT - 1 - ((h >>> 5) % 7);
+      const s = 1.2 + ((h >>> 8) % 3) * 0.7;
+      poly(ctx, [px, py], [px + s * 1.6, py - s * 0.8], [px + s * 3, py - 0.2], [px + s * 1.4, py + s * 0.5]);
+      ctx.fillStyle = (h >>> 11) % 2 ? C.stoneHi : C.stone[1];
       ctx.fill();
-      ctx.strokeStyle = C.line;
-      ctx.lineWidth = 0.3;
+      ctx.strokeStyle = C.stoneLo;
+      ctx.lineWidth = 0.4;
       ctx.stroke();
     }
   }
 
-  exitFrame(ctx, x, y, grain) {
-    // Stone surround and lintel.
-    this.stoneFace(ctx, x + 4, y + 2, 56, 44, 9, grain);
-    ctx.fillStyle = '#05060f';
+  exitFrame(ctx, x, y) {
+    ctx.fillStyle = C.mortar;
+    ctx.fillRect(x + 4, y + 2, 56, 44);
+    this.course(ctx, x + 4, y + 2, 7, 90, 1);
+    this.course(ctx, x + 28, y + 2, 7, 91, 2);
+    for (const sx of [x + 4, x + 52]) {
+      for (let i = 0; i < 5; i++) this.stoneFace(ctx, sx + 0.3, y + 9 + i * 7.4 + 0.3, 7.4, 6.8, hash(sx, i, 4));
+    }
+    ctx.fillStyle = C.void;
     ctx.fillRect(x + 12, y + 9, 40, 37);
     for (let i = 0; i < 5; i++) {
       const sy = y + 46 - (i + 1) * 7.4;
-      ctx.fillStyle = vgrad(ctx, sy, sy + 7.4, ['#3a4370', '#1a1f3a']);
+      ctx.fillStyle = i % 2 ? C.stone[1] : C.stone[2];
       ctx.fillRect(x + 12 + i * 3.5, sy, 40 - i * 7, 7.4);
-      ctx.fillStyle = 'rgba(200,210,255,0.35)';
-      ctx.fillRect(x + 12 + i * 3.5, sy, 40 - i * 7, 0.6);
+      ctx.fillStyle = C.stoneHi;
+      ctx.fillRect(x + 12 + i * 3.5, sy, 40 - i * 7, 0.8);
+      ctx.fillStyle = C.stoneLo;
+      ctx.fillRect(x + 12 + i * 3.5, sy + 6.6, 40 - i * 7, 0.8);
     }
-    ctx.fillStyle = vgrad(ctx, y, y + 4, ['#c8cef0', '#6a73a8']);
-    ctx.fillRect(x + 2, y, 60, 3.5);
   }
 
   // ---- foreground layer ----------------------------------------------------
 
   drawForeground(ctx, level, rx, ry) {
-    const grain = this.grain(ctx);
     this.eachTile(rx, ry, (c, r, x, y) => {
       const t = level.tile(c, r).t;
-      if (t === T.PILLAR) this.pillar(ctx, x, y, grain);
+      if (t === T.PILLAR) this.pillar(ctx, x, y, c, r);
       if (t !== T.EMPTY && t !== T.WALL && t !== T.LOOSE && t !== T.PLATE) this.floorFront(ctx, x, y, c, r, level);
     });
   }
 
-  pillar(ctx, x, y, grain) {
-    ctx.fillStyle = hgrad(ctx, x + 9, x + 23, C.pillar);
-    ctx.fillRect(x + 9.5, y + 5, 13, 44);
-    ctx.fillStyle = grain;
-    ctx.fillRect(x + 9.5, y + 5, 13, 44);
-    for (const [cy, h] of [[y, 5.5], [y + 48, 5.5]]) {
-      ctx.fillStyle = hgrad(ctx, x + 6, x + 26, C.pillar);
-      ctx.fillRect(x + 6, cy, 20, h);
-      ctx.fillStyle = 'rgba(230,234,255,0.6)';
-      ctx.fillRect(x + 6, cy, 20, 0.7);
-      ctx.fillStyle = 'rgba(8,10,30,0.6)';
-      ctx.fillRect(x + 6, cy + h - 0.8, 20, 0.8);
-    }
-    ctx.fillStyle = 'rgba(8,10,30,0.45)';
-    ctx.fillRect(x + 9.5, y + 5.5, 13, 2);
+  // A column of stacked stones with a dark dithered side, standing on the floor.
+  pillar(ctx, x, y, c, r) {
+    const x0 = x + 7;
+    const x1 = x + 22;
+    const bottom = y + SLAB_TOP + 5;
+    poly(ctx, [x1, y], [x1 + SKEW, y], [x1 + SKEW, bottom - (FRONT - SLAB_TOP)], [x1, bottom]);
+    ctx.fillStyle = C.side;
+    ctx.fill();
+    ctx.fillStyle = this.dither(ctx);
+    ctx.fill();
+    ctx.fillStyle = C.mortar;
+    ctx.fillRect(x0, y, x1 - x0, bottom - y);
+    const h = (bottom - y) / 4;
+    for (let i = 0; i < 4; i++) this.stoneFace(ctx, x0 + 0.4, y + i * h + 0.4, x1 - x0 - 0.8, h - 0.8, hash(c, r, i + 60));
   }
 
   // ---- animated pieces -----------------------------------------------------
 
   drawDynamic(ctx, level, rx, ry) {
-    const grain = this.grain(ctx);
     this.eachTile(rx, ry, (c, r, x, y) => {
       const tl = level.tile(c, r);
       switch (tl.t) {
@@ -419,7 +382,7 @@ export class Renderer {
           break;
         case T.LOOSE: {
           const shaking = tl.fallIn > 0 || tl.wobble > 0;
-          this.floor(ctx, x, y, c, r, level, grain, shaking ? (this.frame & 1 ? -0.8 : 0.8) : 0);
+          this.floor(ctx, x, y, c, r, level, shaking ? (this.frame & 1 ? -0.8 : 0.8) : 0);
           ctx.strokeStyle = 'rgba(20,24,60,0.7)';
           ctx.lineWidth = 0.5;
           ctx.beginPath();
@@ -432,7 +395,7 @@ export class Renderer {
           break;
         }
         case T.PLATE:
-          this.floor(ctx, x, y, c, r, level, grain);
+          this.floor(ctx, x, y, c, r, level);
           this.plate(ctx, x, y, tl.pressed);
           break;
         case T.POTION:
@@ -442,14 +405,14 @@ export class Renderer {
           this.floorSword(ctx, x, y);
           break;
         case T.EXIT:
-          if (tl.half === 0) this.exitDoor(ctx, x, y, level.exitOpen, grain);
+          if (tl.half === 0) this.exitDoor(ctx, x, y, level.exitOpen);
           break;
       }
     });
     for (const f of level.falling) {
       const x = (f.c - rx * ROOM_COLS) * TILE_W;
       const y = f.y - 55 - ry * ROOM_H;
-      if (x >= 0 && x < ROOM_W) this.floor(ctx, x, y, -9, -9, level, grain);
+      if (x >= 0 && x < ROOM_W) this.floor(ctx, x, y, -9, -9, level);
     }
   }
 
@@ -463,9 +426,9 @@ export class Renderer {
     // Warm light on the stonework.
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    const glow = ctx.createRadialGradient(fx, base - 5, 0, fx, base - 5, 48 * f);
-    glow.addColorStop(0, 'rgba(255,150,60,0.28)');
-    glow.addColorStop(0.4, 'rgba(255,110,40,0.10)');
+    const glow = ctx.createRadialGradient(fx, base - 5, 0, fx, base - 5, 22 * f);
+    glow.addColorStop(0, 'rgba(255,150,60,0.10)');
+    glow.addColorStop(0.4, 'rgba(255,110,40,0.03)');
     glow.addColorStop(1, 'rgba(255,90,20,0)');
     ctx.fillStyle = glow;
     ctx.fillRect(fx - 50, base - 55, 100, 100);
@@ -512,13 +475,13 @@ export class Renderer {
     const top = y + (pressed ? 50.5 : 49);
     const front = y + (pressed ? 55 : 53.5);
     poly(ctx, [x + 6, front], [x + 25, front], [x + 28, top], [x + 9, top]);
-    ctx.fillStyle = vgrad(ctx, top, front, pressed ? ['#70799f', '#9ea6d6'] : ['#8e96c8', '#e0e4fa']);
+    ctx.fillStyle = vgrad(ctx, top, front, pressed ? [C.topBack, C.top] : [C.stone[1], C.stoneHi]);
     ctx.fill();
-    ctx.strokeStyle = C.line;
+    ctx.strokeStyle = C.stoneLo;
     ctx.lineWidth = 0.4;
     ctx.stroke();
     if (!pressed) {
-      ctx.fillStyle = vgrad(ctx, front, front + 1.8, C.front);
+      ctx.fillStyle = C.stoneLo;
       ctx.fillRect(x + 6, front, 19, 1.8);
     }
   }
@@ -580,17 +543,15 @@ export class Renderer {
     }
   }
 
-  exitDoor(ctx, x, y, open, grain) {
+  exitDoor(ctx, x, y, open) {
     const h = (1 - open) * 37;
     if (h <= 0.2) return;
-    ctx.fillStyle = vgrad(ctx, y + 9, y + 9 + h, ['#5c6598', '#434b7c']);
+    ctx.fillStyle = C.stone[0];
     ctx.fillRect(x + 12, y + 9, 40, h);
-    ctx.fillStyle = grain;
-    ctx.fillRect(x + 12, y + 9, 40, h);
-    ctx.fillStyle = 'rgba(10,12,40,0.5)';
-    for (let yy = y + 13; yy < y + 9 + h; yy += 5) ctx.fillRect(x + 12, yy, 40, 0.6);
-    ctx.fillStyle = 'rgba(220,226,255,0.7)';
-    ctx.fillRect(x + 12, y + 9 + h - 0.7, 40, 0.7);
+    ctx.fillStyle = C.stoneLo;
+    for (let yy = y + 13; yy < y + 9 + h; yy += 5) ctx.fillRect(x + 12, yy, 40, 0.7);
+    ctx.fillStyle = C.stoneHi;
+    ctx.fillRect(x + 12, y + 9 + h - 0.8, 40, 0.8);
   }
 
   gates(ctx, level, rx, ry) {

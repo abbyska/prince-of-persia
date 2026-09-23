@@ -35,9 +35,9 @@ function makeLook(src) {
 }
 
 const LOOKS = {
-  prince: makeLook({ pants: '#eeeef8', shirt: '#fafafe', skin: '#e6a676', hair: '#2a170c', head: 'prince' }),
+  prince: makeLook({ pants: '#f2ecd4', shirt: '#f8f2de', skin: '#e8a070', hair: '#c8983c', head: 'prince' }),
   guard: makeLook({
-    pants: '#d49a3c', shirt: '#4a64c8', skin: '#c47f52', hair: '#1c0e06',
+    pants: '#8c92e8', shirt: '#4c4cb8', skin: '#c47f52', hair: '#1c0e06',
     turban: '#f0f0f8', belt: '#cc3434', coat: true, head: 'guard',
   }),
 };
@@ -182,7 +182,7 @@ function head(ctx, h, d, look) {
     ctx.arc(2.7, -2.6, 0.75, 0, Math.PI * 2);
     ctx.fill();
   } else {
-    // Dark hair swept back.
+    // Hair swept back.
     ctx.beginPath();
     ctx.moveTo(2.8, -2.2);
     ctx.quadraticCurveTo(0.6, -4.9, -2.6, -3.4);
@@ -224,9 +224,9 @@ function sword(ctx, w, ang, d) {
 }
 
 export function drawShadow(ctx, x, y) {
-  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.fillStyle = 'rgba(0,0,10,0.25)';
   ctx.beginPath();
-  ctx.ellipse(x, y + 0.2, 9.5, 2, 0, 0, Math.PI * 2);
+  ctx.ellipse(x, y + 0.2, 8, 1.6, 0, 0, Math.PI * 2);
   ctx.fill();
 }
 
