@@ -1,5 +1,5 @@
 import './style.css';
-import { SCREEN_W, SCREEN_H, TICK_MS } from './constants.js';
+import { TICK_MS } from './constants.js';
 import { Game } from './game.js';
 import { LEVEL1 } from './level1.js';
 import { Renderer } from './render.js';
@@ -7,11 +7,7 @@ import { Input } from './input.js';
 import { sfx, unlockAudio, toggleMute } from './audio.js';
 
 const view = document.getElementById('screen');
-const vctx = view.getContext('2d');
-const buf = document.createElement('canvas');
-buf.width = SCREEN_W;
-buf.height = SCREEN_H;
-const renderer = new Renderer(buf.getContext('2d'));
+const renderer = new Renderer(view);
 
 const game = new Game(LEVEL1, {
   sfx,
@@ -21,6 +17,7 @@ const input = new Input();
 const isTouch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
 document.body.classList.toggle('touch', isTouch);
 let paused = false;
+let dirty = true;
 
 // ---- layout ----------------------------------------------------------------
 
@@ -46,18 +43,15 @@ function layout() {
   w = (h * 4) / 3;
   view.style.width = `${Math.floor(w)}px`;
   view.style.height = `${Math.floor(h)}px`;
-  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  // Draw at the display's real resolution (capped to keep phones fast).
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
   view.width = Math.floor(w * dpr);
   view.height = Math.floor(h * dpr);
+  renderer.resize();
 
   const pad = Math.round(Math.max(110, Math.min(170, portrait ? vw * 0.4 : (vw - w) / 2 - 20, vh * 0.45)));
   document.documentElement.style.setProperty('--pad', `${pad}px`);
-  present();
-}
-
-function present() {
-  vctx.imageSmoothingEnabled = false;
-  vctx.drawImage(buf, 0, 0, view.width, view.height);
+  dirty = true;
 }
 
 // ---- flow ------------------------------------------------------------------
@@ -146,7 +140,6 @@ document.addEventListener('dblclick', (e) => e.preventDefault());
 
 let last = performance.now();
 let acc = 0;
-let dirty = true;
 
 function frame(now) {
   acc += Math.min(250, now - last);
@@ -159,13 +152,13 @@ function frame(now) {
   }
   if (dirty) {
     renderer.render(game, { touch: isTouch, paused });
-    present();
     dirty = false;
   }
   requestAnimationFrame(frame);
 }
 
 layout();
+document.fonts?.ready.then(() => (dirty = true));
 requestAnimationFrame(frame);
 
 // Handy for debugging from the console.

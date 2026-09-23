@@ -4,16 +4,19 @@ A browser remake of the first level of Jordan Mechner's 1989 *Prince of Persia*.
 It aims for the look and feel of the DOS original and plays on phones as well as
 desktops.
 
-## What makes it feel like 1989
+## Look and feel
 
-- **320×200 screen** in a VGA-style blue dungeon palette. It is scaled up with
-  sharp pixels and shown at 4:3, the shape of a 1989 monitor.
-- **Pseudo-3D depth like the original:** floors are slabs with a receding top
-  surface, a front face and angled ends at drops; slabs and stone blocks cast
-  shadows; the Prince passes behind pillars, and ledge lips cover his hands
-  when he hangs.
-- **One room per screen.** The camera cuts from room to room instead of
-  scrolling. Each room is 10 tiles wide and 3 tall, as in the original.
+- **Smooth graphics at full resolution.** The game keeps the original's 320×200
+  layout, 10×3-tile rooms and 4:3 screen shape, but draws everything with
+  smooth shapes at your screen's real resolution rather than chunky pixels.
+- **Depth like the original.** Floors are slabs seen from slightly above, with a
+  top surface that recedes towards the back wall, a front edge, and angled ends
+  where they drop away. Stone blocks show a top and a side face. Slabs and
+  blocks cast soft shadows, torches glow on the walls, and characters cast a
+  shadow on the floor.
+- **Layers.** The Prince passes behind pillars, and when he hangs from a ledge,
+  its front edge covers his hands. The front row of spikes is in front of him.
+- **One room per screen.** The camera cuts from room to room, as in the original.
 - **Movement comes from animation, not free physics.** The Prince builds up to
   a run, skids to a stop, skids when he turns around, and can take careful
   steps. He has standing and running jumps, jumps up to grab a ledge, hangs,
@@ -22,12 +25,9 @@ desktops.
 - **Traps and objects:** spikes, loose floors, gates opened by pressure plates,
   healing and life potions, the sword, and an exit door.
 - **Sword fighting:** advance, retreat, strike and parry against a palace guard.
-- **Classic status bar:** red health triangles, the guard's blue triangles, and
-  a 60-minute time limit.
+- **Status bar** with health flasks, the guard's health, and a 60-minute timer.
 - **PC-speaker style sound effects.**
-- **Hand-built pixel sprites in the original's style:** baggy trousers, rim
-  shading and outlines, drawn from a posed skeleton so moves blend smoothly for a
-  rotoscope-like look. No original art or sprites are used.
+- **All art is drawn in code.** No original art or sprites are used.
 
 ## Controls
 
@@ -66,8 +66,8 @@ npm run build    # production build in dist/
 | `src/guard.js` | Guard behaviour |
 | `src/game.js` | Rules, timer and fight resolution; no DOM, so tests can run it |
 | `src/figure.js` | Skeleton poses and blending between them |
-| `src/sprite.js` | Turns a pose into a shaded pixel sprite (Prince and guard) |
-| `src/render.js` | Pixel renderer for the 320×200 screen |
+| `src/character.js` | Draws a posed skeleton as a shaded figure (Prince and guard) |
+| `src/render.js` | Draws rooms, depth, lighting and screens at full resolution |
 | `src/input.js` | Keyboard and multi-touch controls |
 | `src/audio.js` | PC-speaker style sound effects |
 

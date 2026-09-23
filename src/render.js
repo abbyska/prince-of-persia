@@ -1,62 +1,38 @@
 import { SCREEN_W, SCREEN_H, TILE_W, TILE_H, ROOM_COLS, ROOM_ROWS, ROOM_W, ROOM_H } from './constants.js';
 import { T } from './level.js';
 import { princeJoints, guardJoints } from './figure.js';
-import { drawText } from './font.js';
-import { SpriteRasterizer } from './sprite.js';
+import { drawCharacter, drawShadow } from './character.js';
 
-// A small VGA-style palette for the blue dungeon.
-const PAL = {
-  bg: '#2e3660',
-  bgLight: '#363e6c',
-  bgDark: '#282f56',
-  bgHi: '#404a7e',
-  bgLo: '#1e2448',
-  bgMortar: '#10142c',
-  block: '#6c78ac',
-  blockHi: '#a4ace0',
-  blockLo: '#3c4478',
-  blockMark: '#56629a',
-  floorBack: '#767eb4',
-  floorTop: '#c0c6ec',
-  floorEdge: '#dce0f8',
-  floorSide: '#3a4276',
-  blockSide: '#3e477c',
-  floorMid: '#9098cc',
-  floorFront: '#5c6498',
-  floorLine: '#14183a',
-  pillar: '#7884bc',
-  pillarHi: '#a8b0e0',
-  pillarShine: '#d4d8f4',
-  pillarLo: '#444e88',
-  metal: '#4c3c2c',
-  metalHi: '#8c7050',
-  flame: ['#fc5454', '#fca854', '#fcfc54'],
-  spike: '#c8c8dc',
-  spikeTip: '#fcfcfc',
-  gate: '#2a2a36',
-  gateHi: '#6c6c84',
-  door: '#5a6090',
-  doorLine: '#3a4070',
-  stair: ['#202848', '#2c3660'],
-  glass: '#a8c8fc',
-  cork: '#8a6a3a',
-  red: '#fc5454',
-  green: '#54fc54',
-  steel: '#dcdcf0',
-  gold: '#fcd454',
-  hp: '#fc5454',
-  hpEmpty: '#6c1818',
-  guardHp: '#5480fc',
-  text: '#fcfcfc',
+// The game world is laid out on the original's 320x200 grid, but drawn with
+// smooth shapes at the display's full resolution. The grid is stretched to
+// 4:3 exactly as a 1989 monitor stretched it.
+//
+// Depth follows the original's oblique view from slightly above: every floor
+// is a slab whose top surface recedes towards the back wall (its back edge
+// shifted SKEW units right), so floor ends and stone blocks show a side face.
+const SLAB_TOP = 46;
+const FRONT = 56; // front edge of the floor surface; feet stand at 55
+const SKEW = 7;
+const FONT = "'Cinzel', 'Trajan Pro', Georgia, 'Times New Roman', serif";
+
+const C = {
+  mortar: '#131730',
+  brick: ['#394170', '#333b68', '#414a7c', '#2e3560'],
+  stone: ['#6773ab', '#606ca4', '#6f7bb2'],
+  topBack: '#6a73a8',
+  topFront: '#cfd4f2',
+  topEdge: '#f0f2fe',
+  front: ['#6a73a8', '#363d6c'],
+  side: ['#4a5388', '#23284c'],
+  line: '#10132a',
+  pillar: ['#353d70', '#aab2e4', '#e2e5fa', '#6c76ae', '#262c58'],
+  flame: ['#fff6c0', '#ffc040', '#ff6a1a', 'rgba(200,30,0,0)'],
+  gold: '#f0c850',
+  text: '#f2ead2',
+  dimText: '#aab0d4',
+  hp: '#ff4a4a',
+  guardHp: '#5c86ff',
 };
-
-// Pseudo-3D slab geometry. Floors are seen from slightly above and to the
-// left: the top surface recedes DEPTH rows, its back edge shifted SKEW pixels
-// right, so the ends of floors and blocks show a side face.
-const SLAB_TOP = 50;
-const DEPTH = 7;
-const SKEW = 4;
-const FRONT_Y = SLAB_TOP + DEPTH; // first row of the slab's front face
 
 function hash(a, b, c = 0) {
   let h = (a * 374761393 + b * 668265263 + c * 2147483647) | 0;
@@ -64,550 +40,678 @@ function hash(a, b, c = 0) {
   return (h ^ (h >>> 16)) >>> 0;
 }
 
+function poly(ctx, ...pts) {
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.closePath();
+}
+
+function vgrad(ctx, y0, y1, stops) {
+  const g = ctx.createLinearGradient(0, y0, 0, y1);
+  stops.forEach((c, i) => g.addColorStop(i / (stops.length - 1), c));
+  return g;
+}
+
+function hgrad(ctx, x0, x1, stops) {
+  const g = ctx.createLinearGradient(x0, 0, x1, 0);
+  stops.forEach((c, i) => g.addColorStop(i / (stops.length - 1), c));
+  return g;
+}
+
 export class Renderer {
-  constructor(ctx) {
-    this.ctx = ctx;
-    this.cache = document.createElement('canvas');
-    this.cache.width = ROOM_W;
-    this.cache.height = ROOM_H;
-    this.cacheKey = '';
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
     this.frame = 0;
-    this.sprites = new SpriteRasterizer();
+    this.resize();
   }
 
-  // ---- static room layer ---------------------------------------------------
-
-  staticRoom(level, rx, ry) {
-    const key = `${rx},${ry},${level.version},${level.def.name}`;
-    if (key === this.cacheKey) return this.cache;
-    this.cacheKey = key;
-    const ctx = this.cache.getContext('2d');
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, ROOM_W, ROOM_H);
-    for (let r = 0; r < ROOM_ROWS; r++) {
-      for (let c = 0; c < ROOM_COLS; c++) {
-        const wc = rx * ROOM_COLS + c;
-        const wr = ry * ROOM_ROWS + r;
-        const x = c * TILE_W;
-        const y = r * TILE_H;
-        const tl = level.tile(wc, wr);
-        if (tl.t === T.WALL) this.wallBlock(ctx, x, y, wc, wr, level);
-        else this.backWall(ctx, x, y, wc, wr, level);
-      }
+  // Call after the canvas changes size.
+  resize() {
+    this.sx = this.canvas.width / SCREEN_W;
+    this.sy = this.canvas.height / SCREEN_H;
+    this.layers = {};
+    const g = document.createElement('canvas');
+    g.width = g.height = 96;
+    const gc = g.getContext('2d');
+    for (let i = 0; i < 1400; i++) {
+      gc.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.12)';
+      gc.fillRect(Math.random() * 96, Math.random() * 96, 1, 1);
     }
-    for (let r = 0; r < ROOM_ROWS; r++) {
-      for (let c = 0; c < ROOM_COLS; c++) {
-        const wc = rx * ROOM_COLS + c;
-        const wr = ry * ROOM_ROWS + r;
-        const x = c * TILE_W;
-        const y = r * TILE_H;
-        const tl = level.tile(wc, wr);
-        switch (tl.t) {
-          case T.FLOOR:
-          case T.POTION:
-          case T.SWORD:
-          case T.SPIKES:
-          case T.GATE:
-            this.floor(ctx, x, y, wc, wr, level);
-            break;
-          case T.TORCH:
-            this.sconce(ctx, x, y);
-            this.floor(ctx, x, y, wc, wr, level);
-            break;
-          case T.PILLAR:
-            this.floor(ctx, x, y, wc, wr, level);
-            break;
-          case T.WALL:
-            this.wallDepth(ctx, x, y, wc, wr, level);
-            break;
-          case T.RUBBLE:
-            this.floor(ctx, x, y, wc, wr, level);
-            this.rubble(ctx, x, y, wc, wr);
-            break;
-          case T.EXIT:
-            if (tl.half === 0) this.exitFrame(ctx, x, y);
-            this.floor(ctx, x, y, wc, wr, level);
-            break;
-        }
-      }
-    }
-    return this.cache;
+    this.grainCanvas = g;
   }
 
-  // Things in front of the characters: pillars, and the front lip of every
-  // floor, so a hanging Prince's hands go behind the ledge edge.
-  foreground(level, rx, ry) {
-    const key = `${rx},${ry},${level.version},${level.def.name}`;
-    if (!this.fg) {
-      this.fg = document.createElement('canvas');
-      this.fg.width = ROOM_W;
-      this.fg.height = ROOM_H;
-    }
-    if (key === this.fgKey) return this.fg;
-    this.fgKey = key;
-    const ctx = this.fg.getContext('2d');
-    ctx.clearRect(0, 0, ROOM_W, ROOM_H);
-    for (let r = 0; r < ROOM_ROWS; r++) {
-      for (let c = 0; c < ROOM_COLS; c++) {
-        const wc = rx * ROOM_COLS + c;
-        const wr = ry * ROOM_ROWS + r;
-        const x = c * TILE_W;
-        const y = r * TILE_H;
-        const t = level.tile(wc, wr).t;
-        if (t === T.PILLAR) this.pillar(ctx, x, y);
-        if (t !== T.EMPTY && t !== T.WALL && t !== T.LOOSE && t !== T.PLATE) this.floorFront(ctx, x, y, wc, wr, level);
-      }
-    }
-    return this.fg;
+  logical(ctx) {
+    ctx.setTransform(this.sx, 0, 0, this.sy, 0, 0);
   }
 
-  // Background stonework: four courses of bricks of uneven width, each brick
-  // bevelled light on top/left and dark on bottom/right, like the DOS dungeon.
-  backWall(ctx, x, y, c, r, level) {
-    ctx.fillStyle = PAL.bgMortar;
+  grain(ctx) {
+    const p = ctx.createPattern(this.grainCanvas, 'repeat');
+    try {
+      p.setTransform(new DOMMatrix([1 / this.sx, 0, 0, 1 / this.sy, 0, 0]));
+    } catch {
+      // Older browsers: the grain is just coarser.
+    }
+    return p;
+  }
+
+  // A cached, transparent full-room layer, redrawn only when its key changes.
+  layer(name, key, draw) {
+    const w = this.canvas.width;
+    const h = Math.ceil(ROOM_H * this.sy);
+    let L = this.layers[name];
+    if (!L) {
+      const cv = document.createElement('canvas');
+      cv.width = w;
+      cv.height = h;
+      L = this.layers[name] = { canvas: cv, key: null };
+    }
+    if (L.key !== key) {
+      L.key = key;
+      const c = L.canvas.getContext('2d');
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.clearRect(0, 0, w, h);
+      this.logical(c);
+      draw(c);
+    }
+    return L.canvas;
+  }
+
+  eachTile(rx, ry, fn) {
+    for (let r = 0; r < ROOM_ROWS; r++) {
+      for (let c = 0; c < ROOM_COLS; c++) fn(rx * ROOM_COLS + c, ry * ROOM_ROWS + r, c * TILE_W, r * TILE_H);
+    }
+  }
+
+  // ---- static background ---------------------------------------------------
+
+  drawBackground(ctx, level, rx, ry) {
+    const grain = this.grain(ctx);
+    this.eachTile(rx, ry, (c, r, x, y) => {
+      if (level.isWall(c, r)) this.wallFace(ctx, x, y, c, r, grain);
+      else this.backWall(ctx, x, y, c, r, grain);
+    });
+    this.eachTile(rx, ry, (c, r, x, y) => {
+      if (!level.isWall(c, r)) this.wallShadows(ctx, x, y, c, r, level);
+    });
+    this.eachTile(rx, ry, (c, r, x, y) => {
+      const tl = level.tile(c, r);
+      switch (tl.t) {
+        case T.WALL:
+          this.wallDepth(ctx, x, y, c, r, level, grain);
+          break;
+        case T.TORCH:
+          this.sconce(ctx, x, y);
+          this.floor(ctx, x, y, c, r, level, grain);
+          break;
+        case T.EXIT:
+          if (tl.half === 0) this.exitFrame(ctx, x, y, grain);
+          this.floor(ctx, x, y, c, r, level, grain);
+          break;
+        case T.RUBBLE:
+          this.floor(ctx, x, y, c, r, level, grain);
+          this.rubble(ctx, x, y, c, r);
+          break;
+        case T.FLOOR:
+        case T.PILLAR:
+        case T.POTION:
+        case T.SWORD:
+        case T.SPIKES:
+        case T.GATE:
+          this.floor(ctx, x, y, c, r, level, grain);
+          break;
+      }
+    });
+  }
+
+  brickFace(ctx, x, y, w, h, base, left, right) {
+    ctx.fillStyle = base;
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = vgrad(ctx, y, y + h, ['rgba(255,255,255,0.10)', 'rgba(0,0,0,0)', 'rgba(0,0,0,0.25)']);
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = 'rgba(190,200,255,0.30)';
+    ctx.fillRect(x, y, w, 0.6);
+    if (left) ctx.fillRect(x, y, 0.6, h);
+    ctx.fillStyle = 'rgba(5,6,20,0.5)';
+    ctx.fillRect(x, y + h - 0.7, w, 0.7);
+    if (right) ctx.fillRect(x + w - 0.7, y, 0.7, h);
+  }
+
+  // Back wall: four courses of bricks of uneven width.
+  backWall(ctx, x, y, c, r, grain) {
+    ctx.fillStyle = C.mortar;
     ctx.fillRect(x, y, TILE_W, TILE_H);
-    let yy = y;
+    const h = TILE_H / 4;
     for (let i = 0; i < 4; i++) {
-      const h = i === 3 ? 15 : 16;
+      const yy = y + i * h;
       let bx = -(hash(c, r, i) % 14);
       let j = 0;
       while (bx < TILE_W) {
         const w = 11 + (hash(c + 17, r * 4 + i, j) % 9);
-        const a = Math.max(0, bx + 1);
-        const b = Math.min(TILE_W, bx + w);
-        if (b > a) this.brick(ctx, x + a, yy + 1, b - a, h - 1, hash(c * 5 + j, r * 4 + i, 7), bx + 1 >= 0, bx + w <= TILE_W);
+        const a = Math.max(0, bx + 0.5);
+        const b = Math.min(TILE_W, bx + w - 0.5);
+        if (b > a) {
+          const tone = C.brick[hash(c * 5 + j, r * 4 + i, 7) % C.brick.length];
+          this.brickFace(ctx, x + a, yy + 0.5, b - a, h - 1, tone, bx >= 0, bx + w <= TILE_W);
+        }
         bx += w;
         j++;
       }
-      yy += h;
     }
-    // Shadows: under the slab above, and cast to the right by a stone block.
-    ctx.fillStyle = '#000';
+    ctx.fillStyle = grain;
+    ctx.fillRect(x, y, TILE_W, TILE_H);
+  }
+
+  // Soft shadows on the back wall: under the slab above, beside stone blocks
+  // and pillars, and a contact shadow where the floor meets the wall.
+  wallShadows(ctx, x, y, c, r, level) {
     if (level.hasFloor(c, r - 1)) {
-      ctx.globalAlpha = 0.5;
-      ctx.fillRect(x, y, TILE_W, 4);
-      ctx.globalAlpha = 0.25;
-      ctx.fillRect(x, y + 4, TILE_W, 6);
+      ctx.fillStyle = vgrad(ctx, y, y + 18, ['rgba(0,0,8,0.65)', 'rgba(0,0,8,0)']);
+      ctx.fillRect(x, y, TILE_W, 18);
     }
     if (level.isWall(c - 1, r)) {
-      ctx.globalAlpha = 0.35;
-      ctx.fillRect(x, y, 7, TILE_H);
+      ctx.fillStyle = hgrad(ctx, x, x + 18, ['rgba(0,0,8,0.6)', 'rgba(0,0,8,0)']);
+      ctx.fillRect(x, y, 18, TILE_H);
     }
-    ctx.globalAlpha = 1;
+    if (level.tile(c, r).t === T.PILLAR) {
+      ctx.fillStyle = hgrad(ctx, x + 20, x + 32, ['rgba(0,0,8,0.45)', 'rgba(0,0,8,0)']);
+      ctx.fillRect(x + 20, y, 12, SLAB_TOP);
+    }
+    if (level.hasFloor(c, r)) {
+      ctx.fillStyle = vgrad(ctx, y + SLAB_TOP - 12, y + SLAB_TOP, ['rgba(0,0,8,0)', 'rgba(0,0,8,0.45)']);
+      ctx.fillRect(x, y + SLAB_TOP - 12, TILE_W, 12);
+    }
   }
 
-  brick(ctx, x, y, w, h, seed, leftEdge, rightEdge) {
-    const tone = seed % 7;
-    ctx.fillStyle = tone === 0 ? PAL.bgLight : tone === 1 ? PAL.bgDark : PAL.bg;
+  stoneFace(ctx, x, y, w, h, seed, grain) {
+    ctx.fillStyle = C.stone[seed % C.stone.length];
     ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = PAL.bgHi;
-    ctx.fillRect(x, y, w, 1);
-    if (leftEdge) ctx.fillRect(x, y, 1, h);
-    ctx.fillStyle = PAL.bgLo;
-    ctx.fillRect(x, y + h - 1, w, 1);
-    if (rightEdge) ctx.fillRect(x + w - 1, y + 1, 1, h - 1);
-    if (seed % 3 === 0 && w > 6) ctx.fillRect(x + 2 + ((seed >> 4) % (w - 5)), y + 3 + ((seed >> 8) % (h - 6)), 2, 1);
+    ctx.fillStyle = vgrad(ctx, y, y + h, ['rgba(255,255,255,0.14)', 'rgba(0,0,0,0)', 'rgba(0,0,20,0.3)']);
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = 'rgba(225,230,255,0.55)';
+    ctx.fillRect(x, y, w, 0.8);
+    ctx.fillRect(x, y, 0.8, h);
+    ctx.fillStyle = 'rgba(10,12,40,0.6)';
+    ctx.fillRect(x, y + h - 1.2, w, 1.2);
+    ctx.fillRect(x + w - 1.2, y, 1.2, h);
+    ctx.fillStyle = 'rgba(20,24,60,0.35)';
+    for (let k = 0; k < 3; k++) {
+      const s = hash(seed, k, 3);
+      if (s % 2) {
+        ctx.beginPath();
+        ctx.ellipse(x + 3 + (s % (w - 6)), y + 3 + ((s >>> 6) % (h - 6)), 1 + ((s >>> 10) % 3), 0.6, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.fillStyle = grain;
+    ctx.fillRect(x, y, w, h);
   }
 
-  // Solid masonry: large bevelled stones with weathering marks.
-  wallBlock(ctx, x, y, c, r, level) {
-    ctx.fillStyle = PAL.floorLine;
+  // Solid masonry, front face: three courses of large stones.
+  wallFace(ctx, x, y, c, r, grain) {
+    ctx.fillStyle = C.line;
     ctx.fillRect(x, y, TILE_W, TILE_H);
     for (let i = 0; i < 3; i++) {
       const by = y + i * 21;
       const segs = (i + r + c) & 1 ? [[0, 16], [16, 32]] : [[0, 32]];
-      for (const [a, b] of segs) {
-        const sx = x + a;
-        const w = b - a - 1;
-        ctx.fillStyle = PAL.block;
-        ctx.fillRect(sx, by, w, 20);
-        ctx.fillStyle = PAL.blockHi;
-        ctx.fillRect(sx, by, w, 1);
-        ctx.fillRect(sx, by, 1, 20);
-        ctx.fillStyle = PAL.blockLo;
-        ctx.fillRect(sx, by + 18, w, 2);
-        ctx.fillRect(sx + w - 2, by + 1, 2, 19);
-        ctx.fillStyle = PAL.blockMark;
-        for (let k = 0; k < 3; k++) {
-          const h = hash(c * 3 + k, r * 3 + i, a);
-          if (h % 2) ctx.fillRect(sx + 2 + (h % (w - 6)), by + 3 + ((h >> 6) % 13), 1 + ((h >> 10) % 3), 1);
-        }
+      for (const [a, b] of segs) this.stoneFace(ctx, x + a + 0.4, by + 0.4, b - a - 0.8, 20.2, hash(c * 3 + a, r * 3 + i), grain);
+    }
+  }
+
+  // Top surface of a slab (floor or stone block), as a receding parallelogram.
+  topSurface(ctx, x, top, front, grain) {
+    poly(ctx, [x, front], [x + TILE_W, front], [x + TILE_W + SKEW, top], [x + SKEW, top]);
+    ctx.fillStyle = vgrad(ctx, top, front, [C.topBack, '#9aa2d4', C.topFront]);
+    ctx.fill();
+    ctx.fillStyle = grain;
+    ctx.fill();
+  }
+
+  sideFace(ctx, x, top, front, bottom) {
+    poly(ctx, [x, front], [x + SKEW, top], [x + SKEW, bottom - (front - top)], [x, bottom]);
+    ctx.fillStyle = hgrad(ctx, x, x + SKEW, C.side);
+    ctx.fill();
+    ctx.strokeStyle = C.line;
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+  }
+
+  // Stone block: top surface where open above, side face where open to the right.
+  wallDepth(ctx, x, y, c, r, level, grain) {
+    if (!level.hasFloor(c, r - 1)) {
+      this.topSurface(ctx, x, y - (FRONT - SLAB_TOP), y, grain);
+      ctx.fillStyle = C.topEdge;
+      ctx.fillRect(x, y - 0.4, TILE_W, 0.7);
+    }
+    if (!level.isWall(c + 1, r)) {
+      this.sideFace(ctx, x + TILE_W, y - (FRONT - SLAB_TOP), y, y + TILE_H);
+      ctx.strokeStyle = 'rgba(10,12,40,0.7)';
+      ctx.lineWidth = 0.6;
+      for (const k of [21, 42]) {
+        ctx.beginPath();
+        ctx.moveTo(x + TILE_W, y + k);
+        ctx.lineTo(x + TILE_W + SKEW, y + k - (FRONT - SLAB_TOP));
+        ctx.stroke();
       }
     }
   }
 
-  // A stone block's top surface (open above) and right side face (open to the right).
-  wallDepth(ctx, x, y, c, r, level) {
-    const rightOpen = !level.isWall(c + 1, r);
-    if (!level.hasFloor(c, r - 1)) this.topSurface(ctx, x, y, level.isWall(c - 1, r) ? false : true, rightOpen, c, r);
-    if (rightOpen) {
-      for (let i = 0; i < SKEW; i++) {
-        const rise = Math.round(((i + 1) * (DEPTH - 1)) / SKEW);
-        ctx.fillStyle = PAL.blockSide;
-        ctx.fillRect(x + TILE_W + i, y + DEPTH - rise, 1, TILE_H - DEPTH);
-        ctx.fillStyle = PAL.floorLine;
-        for (let k = 1; k < 3; k++) ctx.fillRect(x + TILE_W + i, y + k * 21 - rise, 1, 1);
-      }
-      ctx.fillStyle = PAL.floorLine;
-      ctx.fillRect(x + TILE_W + SKEW - 1, y, 1, TILE_H - DEPTH);
+  floor(ctx, x, y, c, r, level, grain, dy = 0) {
+    const top = y + SLAB_TOP + dy;
+    const front = y + FRONT + dy;
+    this.topSurface(ctx, x, top, front, grain);
+    // Tile joint running back into the surface.
+    if (level.tile(c + 1, r).t !== T.EMPTY) {
+      ctx.strokeStyle = 'rgba(30,34,70,0.35)';
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(x + TILE_W, front);
+      ctx.lineTo(x + TILE_W + SKEW, top);
+      ctx.stroke();
     }
-  }
-
-  topSurface(ctx, x, top, leftOpen, rightOpen, c, r) {
-    for (let k = 0; k < DEPTH; k++) {
-      const sh = Math.round(((DEPTH - 1 - k) * SKEW) / (DEPTH - 1));
-      const x0 = x + (leftOpen ? sh : 0);
-      const x1 = x + TILE_W + (rightOpen ? sh : 0);
-      ctx.fillStyle = k === 0 ? PAL.floorBack : k < 3 ? PAL.floorMid : k === DEPTH - 1 ? PAL.floorEdge : PAL.floorTop;
-      ctx.fillRect(x0, top + k, x1 - x0, 1);
-    }
-    ctx.fillStyle = PAL.floorMid;
     for (let k = 0; k < 3; k++) {
       const h = hash(c, r, k + 40);
-      ctx.fillRect(x + 2 + (h % 26), top + 3 + ((h >> 5) % 3), 2, 1);
+      ctx.fillStyle = 'rgba(40,46,90,0.25)';
+      ctx.beginPath();
+      ctx.ellipse(x + 4 + (h % 26), top + 3 + ((h >>> 5) % 6), 1.2, 0.4, 0, 0, Math.PI * 2);
+      ctx.fill();
     }
-  }
-
-  // A floor slab: a receding lit top surface, a darker front face, and a side
-  // face where the floor ends at a drop.
-  floor(ctx, x, y, c, r, level, dy = 0) {
-    const top = y + SLAB_TOP + dy;
-    const leftOpen = level.tile(c - 1, r).t === T.EMPTY;
-    const rightOpen = level.tile(c + 1, r).t === T.EMPTY;
-    ctx.fillStyle = PAL.bgMortar;
-    ctx.fillRect(x + (leftOpen ? SKEW : 0), top - 1, TILE_W + (rightOpen ? 0 : 0), 1);
-    this.topSurface(ctx, x, top, leftOpen, rightOpen, c, r);
     this.floorFront(ctx, x, y + dy, c, r, level);
   }
 
+  // The slab's front face (and side face at a drop). Also drawn in the
+  // foreground so a hanging Prince's hands go behind the ledge's lip.
   floorFront(ctx, x, y, c, r, level) {
-    const f = y + FRONT_Y;
-    ctx.fillStyle = PAL.floorFront;
-    ctx.fillRect(x, f, TILE_W, 5);
-    ctx.fillStyle = PAL.floorLine;
-    ctx.fillRect(x, f + 5, TILE_W, 1);
-    ctx.fillRect(x + TILE_W - 1, f + 1, 1, 4);
-    if (level.tile(c - 1, r).t === T.EMPTY) ctx.fillRect(x, f, 1, 6);
-    if (level.tile(c + 1, r).t === T.EMPTY) {
-      for (let i = 0; i < SKEW; i++) {
-        const rise = Math.round(((i + 1) * (DEPTH - 1)) / SKEW);
-        ctx.fillStyle = PAL.floorSide;
-        ctx.fillRect(x + TILE_W + i, f - rise, 1, 6);
-        ctx.fillStyle = PAL.floorLine;
-        ctx.fillRect(x + TILE_W + i, f + 5 - rise, 1, 1);
-      }
-      ctx.fillRect(x + TILE_W + SKEW - 1, f - DEPTH + 1, 1, 6);
-    }
-  }
-
-  // A round column, lit from the left, with a capital and a base.
-  pillar(ctx, x, y) {
-    const px = x + 10;
-    ctx.fillStyle = PAL.pillar;
-    ctx.fillRect(px, y + 7, 12, 43);
-    ctx.fillStyle = PAL.pillarHi;
-    ctx.fillRect(px + 2, y + 7, 3, 43);
-    ctx.fillStyle = PAL.pillarShine;
-    ctx.fillRect(px + 3, y + 7, 1, 43);
-    ctx.fillStyle = PAL.pillarLo;
-    ctx.fillRect(px + 9, y + 7, 3, 43);
-    ctx.fillRect(px, y + 7, 1, 43);
-    for (const [cy, rows] of [[y + 1, [PAL.pillarHi, PAL.pillarShine, PAL.pillar, PAL.pillar, PAL.pillarLo, PAL.floorLine]], [y + 48, [PAL.floorLine, PAL.pillarHi, PAL.pillar, PAL.pillar, PAL.pillarLo, PAL.pillarLo]]]) {
-      rows.forEach((col, i) => {
-        ctx.fillStyle = col;
-        ctx.fillRect(x + 7, cy + i, 18, 1);
-      });
-    }
+    const front = y + FRONT;
+    const bottom = y + TILE_H;
+    ctx.fillStyle = vgrad(ctx, front, bottom, C.front);
+    ctx.fillRect(x, front, TILE_W, bottom - front);
+    ctx.fillStyle = C.topEdge;
+    ctx.fillRect(x, front - 0.35, TILE_W, 0.7);
+    ctx.fillStyle = C.line;
+    ctx.fillRect(x, bottom - 0.7, TILE_W, 0.7);
+    ctx.fillRect(x + TILE_W - 0.5, front + 0.5, 0.5, bottom - front - 1);
+    if (level.tile(c - 1, r).t === T.EMPTY) ctx.fillRect(x, front, 0.6, bottom - front);
+    if (level.tile(c + 1, r).t === T.EMPTY) this.sideFace(ctx, x + TILE_W, y + SLAB_TOP, front, bottom);
   }
 
   sconce(ctx, x, y) {
-    ctx.fillStyle = PAL.metal;
-    ctx.fillRect(x + 13, y + 21, 6, 3);
-    ctx.fillRect(x + 15, y + 24, 2, 8);
-    ctx.fillRect(x + 13, y + 31, 6, 2);
-    ctx.fillStyle = PAL.metalHi;
-    ctx.fillRect(x + 13, y + 21, 6, 1);
-    ctx.fillRect(x + 15, y + 24, 1, 8);
-  }
-
-  flame(ctx, x, y, seed) {
-    const h = hash(seed, this.frame);
-    const tall = 10 + (h % 5);
-    const lean = ((h >> 3) % 5) - 2;
-    const cx = x + 16;
-    const base = y + 20;
-    for (let i = 0; i < tall; i++) {
-      const k = i / tall;
-      const w = Math.max(1, Math.round(7 * Math.pow(1 - k, 0.75) * (i < 2 ? 0.8 : 1)));
-      const sx = Math.round(cx - w / 2 + lean * k * k);
-      ctx.fillStyle = PAL.flame[0];
-      ctx.fillRect(sx, base - i, w, 1);
-      if (w > 2) {
-        ctx.fillStyle = PAL.flame[1];
-        ctx.fillRect(sx + 1, base - i, w - 2, 1);
-      }
-      if (w > 4 && k < 0.55) {
-        ctx.fillStyle = PAL.flame[2];
-        ctx.fillRect(sx + 2, base - i, w - 4, 1);
-      }
-    }
-    ctx.fillStyle = '#fcfcfc';
-    ctx.fillRect(cx - 1, base - 2, 2, 2);
-    if (h % 4 === 0) {
-      ctx.fillStyle = PAL.flame[2];
-      ctx.fillRect(cx + lean + ((h >> 7) % 3) - 1, base - tall - 2 - ((h >> 9) % 3), 1, 1);
-    }
+    ctx.fillStyle = '#2a2018';
+    poly(ctx, [x + 12.5, y + 20], [x + 19.5, y + 20], [x + 18, y + 23.5], [x + 14, y + 23.5]);
+    ctx.fill();
+    ctx.fillStyle = hgrad(ctx, x + 14.5, x + 17.5, ['#8a6c48', '#3a2c1c']);
+    ctx.fillRect(x + 14.8, y + 23.5, 2.4, 9);
+    ctx.fillRect(x + 13, y + 31.5, 6, 1.6);
   }
 
   rubble(ctx, x, y, c, r) {
-    ctx.fillStyle = PAL.floorFront;
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 7; i++) {
       const h = hash(c, r, i);
-      ctx.fillRect(x + 3 + (h % 26), y + 52 + ((h >> 5) % 3), 2 + ((h >> 8) % 3), 1 + ((h >> 11) % 2));
+      const px = x + 4 + (h % 26);
+      const py = y + FRONT - 2 - ((h >>> 5) % 6);
+      const s = 1 + ((h >>> 8) % 3) * 0.6;
+      poly(ctx, [px, py], [px + s * 1.4, py - s], [px + s * 2.4, py - 0.2], [px + s * 1.2, py + s * 0.5]);
+      ctx.fillStyle = (h >>> 11) % 2 ? '#8b93c6' : '#5d6698';
+      ctx.fill();
+      ctx.strokeStyle = C.line;
+      ctx.lineWidth = 0.3;
+      ctx.stroke();
     }
   }
 
-  exitFrame(ctx, x, y) {
-    ctx.fillStyle = PAL.block;
-    ctx.fillRect(x + 6, y + 3, 52, 52);
-    ctx.fillStyle = PAL.blockHi;
-    ctx.fillRect(x + 4, y + 1, 56, 3);
-    ctx.fillRect(x + 6, y + 4, 1, 51);
-    ctx.fillStyle = PAL.blockLo;
-    ctx.fillRect(x + 57, y + 4, 1, 51);
-    ctx.fillRect(x + 11, y + 9, 42, 1);
-    ctx.fillStyle = '#000';
-    ctx.fillRect(x + 12, y + 10, 40, 45);
+  exitFrame(ctx, x, y, grain) {
+    // Stone surround and lintel.
+    this.stoneFace(ctx, x + 4, y + 2, 56, 44, 9, grain);
+    ctx.fillStyle = '#05060f';
+    ctx.fillRect(x + 12, y + 9, 40, 37);
     for (let i = 0; i < 5; i++) {
-      ctx.fillStyle = PAL.stair[i & 1];
-      ctx.fillRect(x + 12 + i * 3, y + 49 - i * 8, 40 - i * 6, 6);
+      const sy = y + 46 - (i + 1) * 7.4;
+      ctx.fillStyle = vgrad(ctx, sy, sy + 7.4, ['#3a4370', '#1a1f3a']);
+      ctx.fillRect(x + 12 + i * 3.5, sy, 40 - i * 7, 7.4);
+      ctx.fillStyle = 'rgba(200,210,255,0.35)';
+      ctx.fillRect(x + 12 + i * 3.5, sy, 40 - i * 7, 0.6);
     }
+    ctx.fillStyle = vgrad(ctx, y, y + 4, ['#c8cef0', '#6a73a8']);
+    ctx.fillRect(x + 2, y, 60, 3.5);
   }
 
-  // ---- dynamic tile layer --------------------------------------------------
+  // ---- foreground layer ----------------------------------------------------
 
-  dynamicTiles(ctx, level, rx, ry) {
-    for (let r = 0; r < ROOM_ROWS; r++) {
-      for (let c = 0; c < ROOM_COLS; c++) {
-        const wc = rx * ROOM_COLS + c;
-        const wr = ry * ROOM_ROWS + r;
-        const x = c * TILE_W;
-        const y = r * TILE_H;
-        const tl = level.tile(wc, wr);
-        switch (tl.t) {
-          case T.TORCH:
-            this.flame(ctx, x, y, wc * 31 + wr);
-            break;
-          case T.SPIKES:
-            this.spikes(ctx, x, y, tl.ext, false);
-            break;
-          case T.LOOSE: {
-            const shaking = tl.fallIn > 0 || tl.wobble > 0;
-            this.floor(ctx, x, y, wc, wr, level, shaking ? (this.frame & 1 ? -1 : 1) : 0);
-            ctx.fillStyle = PAL.floorLine;
-            ctx.fillRect(x + 9, y + 56 + (shaking ? 1 : 0), 1, 2);
-            ctx.fillRect(x + 22, y + 57, 1, 1);
-            break;
-          }
-          case T.PLATE:
-            this.floor(ctx, x, y, wc, wr, level);
-            if (tl.pressed) {
-              // Sunk flush with the floor: just its outline shows.
-              ctx.fillStyle = PAL.floorMid;
-              ctx.fillRect(x + 6, y + 53, 21, 2);
-              ctx.fillStyle = PAL.floorLine;
-              ctx.fillRect(x + 6, y + 55, 21, 1);
-            } else {
-              // A raised stone plate with its own lit top and front edge.
-              ctx.fillStyle = PAL.floorEdge;
-              ctx.fillRect(x + 7, y + 51, 20, 1);
-              ctx.fillStyle = PAL.floorTop;
-              ctx.fillRect(x + 6, y + 52, 20, 1);
-              ctx.fillStyle = PAL.floorFront;
-              ctx.fillRect(x + 6, y + 53, 20, 2);
-              ctx.fillStyle = PAL.floorLine;
-              ctx.fillRect(x + 6, y + 55, 21, 1);
-              ctx.fillRect(x + 26, y + 52, 1, 3);
-            }
-            break;
-          case T.POTION:
-            this.potion(ctx, x, y, tl.kind, wc);
-            break;
-          case T.SWORD:
-            ctx.fillStyle = PAL.floorLine;
-            ctx.fillRect(x + 4, y + 51, 23, 3);
-            ctx.fillStyle = PAL.steel;
-            ctx.fillRect(x + 10, y + 52, 16, 1);
-            ctx.fillStyle = PAL.gold;
-            ctx.fillRect(x + 8, y + 51, 1, 3);
-            ctx.fillRect(x + 5, y + 52, 3, 1);
-            if (this.frame % 24 < 2) {
-              ctx.fillStyle = '#fff';
-              ctx.fillRect(x + 12 + (this.frame % 24) * 6, y + 52, 1, 1);
-            }
-            break;
-          case T.EXIT:
-            if (tl.half === 0) this.exitDoor(ctx, x, y, level.exitOpen);
-            break;
-        }
-      }
+  drawForeground(ctx, level, rx, ry) {
+    const grain = this.grain(ctx);
+    this.eachTile(rx, ry, (c, r, x, y) => {
+      const t = level.tile(c, r).t;
+      if (t === T.PILLAR) this.pillar(ctx, x, y, grain);
+      if (t !== T.EMPTY && t !== T.WALL && t !== T.LOOSE && t !== T.PLATE) this.floorFront(ctx, x, y, c, r, level);
+    });
+  }
+
+  pillar(ctx, x, y, grain) {
+    ctx.fillStyle = hgrad(ctx, x + 9, x + 23, C.pillar);
+    ctx.fillRect(x + 9.5, y + 5, 13, 44);
+    ctx.fillStyle = grain;
+    ctx.fillRect(x + 9.5, y + 5, 13, 44);
+    for (const [cy, h] of [[y, 5.5], [y + 48, 5.5]]) {
+      ctx.fillStyle = hgrad(ctx, x + 6, x + 26, C.pillar);
+      ctx.fillRect(x + 6, cy, 20, h);
+      ctx.fillStyle = 'rgba(230,234,255,0.6)';
+      ctx.fillRect(x + 6, cy, 20, 0.7);
+      ctx.fillStyle = 'rgba(8,10,30,0.6)';
+      ctx.fillRect(x + 6, cy + h - 0.8, 20, 0.8);
     }
+    ctx.fillStyle = 'rgba(8,10,30,0.45)';
+    ctx.fillRect(x + 9.5, y + 5.5, 13, 2);
+  }
+
+  // ---- animated pieces -----------------------------------------------------
+
+  drawDynamic(ctx, level, rx, ry) {
+    const grain = this.grain(ctx);
+    this.eachTile(rx, ry, (c, r, x, y) => {
+      const tl = level.tile(c, r);
+      switch (tl.t) {
+        case T.TORCH:
+          this.flame(ctx, x, y, c * 31 + r);
+          break;
+        case T.SPIKES:
+          this.spikes(ctx, x, y, tl.ext, false);
+          break;
+        case T.LOOSE: {
+          const shaking = tl.fallIn > 0 || tl.wobble > 0;
+          this.floor(ctx, x, y, c, r, level, grain, shaking ? (this.frame & 1 ? -0.8 : 0.8) : 0);
+          ctx.strokeStyle = 'rgba(20,24,60,0.7)';
+          ctx.lineWidth = 0.5;
+          ctx.beginPath();
+          ctx.moveTo(x + 10, y + FRONT);
+          ctx.lineTo(x + 13, y + 51);
+          ctx.lineTo(x + 18, y + 49);
+          ctx.moveTo(x + 22, y + FRONT);
+          ctx.lineTo(x + 24, y + 52);
+          ctx.stroke();
+          break;
+        }
+        case T.PLATE:
+          this.floor(ctx, x, y, c, r, level, grain);
+          this.plate(ctx, x, y, tl.pressed);
+          break;
+        case T.POTION:
+          this.potion(ctx, x, y, tl.kind, c);
+          break;
+        case T.SWORD:
+          this.floorSword(ctx, x, y);
+          break;
+        case T.EXIT:
+          if (tl.half === 0) this.exitDoor(ctx, x, y, level.exitOpen, grain);
+          break;
+      }
+    });
     for (const f of level.falling) {
       const x = (f.c - rx * ROOM_COLS) * TILE_W;
       const y = f.y - 55 - ry * ROOM_H;
-      if (x >= 0 && x < ROOM_W) this.floor(ctx, x, y, -9, -9, level);
+      if (x >= 0 && x < ROOM_W) this.floor(ctx, x, y, -9, -9, level, grain);
     }
   }
 
-  // Two rows of blades: the back row behind the characters, the front row in
-  // front of them (so a victim is drawn impaled between the rows).
+  flame(ctx, x, y, seed) {
+    const t = this.frame;
+    const f = 0.85 + 0.12 * Math.sin(t * 1.9 + seed) + (hash(seed, t) % 100) / 900;
+    const lean = Math.sin(t * 1.3 + seed * 2) * 1.6;
+    const fx = x + 16;
+    const base = y + 20;
+
+    // Warm light on the stonework.
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const glow = ctx.createRadialGradient(fx, base - 5, 0, fx, base - 5, 48 * f);
+    glow.addColorStop(0, 'rgba(255,150,60,0.28)');
+    glow.addColorStop(0.4, 'rgba(255,110,40,0.10)');
+    glow.addColorStop(1, 'rgba(255,90,20,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(fx - 50, base - 55, 100, 100);
+    ctx.restore();
+
+    const tongue = (w, h, k) => {
+      ctx.beginPath();
+      ctx.moveTo(fx - w, base);
+      ctx.bezierCurveTo(fx - w * 1.4, base - h * 0.4, fx - w * 0.3 + lean * k, base - h * 0.75, fx + lean * 1.3 * k, base - h);
+      ctx.bezierCurveTo(fx + w * 0.3 + lean * k, base - h * 0.7, fx + w * 1.4, base - h * 0.4, fx + w, base);
+      ctx.closePath();
+    };
+    const g = ctx.createRadialGradient(fx, base - 2, 0.5, fx, base - 5, 12 * f);
+    g.addColorStop(0, C.flame[0]);
+    g.addColorStop(0.35, C.flame[1]);
+    g.addColorStop(0.75, C.flame[2]);
+    g.addColorStop(1, C.flame[3]);
+    tongue(3.4, 14 * f, 1);
+    ctx.fillStyle = g;
+    ctx.fill();
+    tongue(1.6, 7 * f, 0.6);
+    ctx.fillStyle = 'rgba(255,250,220,0.9)';
+    ctx.fill();
+  }
+
+  // Two rows of blades: the back row behind the characters, the front row in front.
   spikes(ctx, x, y, ext, front) {
-    const h = [0, 3, 6, 9, 11, 12][ext];
-    const Y = y + (front ? 56 : 52);
-    for (const sx of front ? [3, 10, 17, 24] : [7, 14, 21, 28]) {
-      ctx.fillStyle = PAL.floorLine;
-      ctx.fillRect(x + sx, Y, 2, 1);
+    const h = (ext / 5) * 13;
+    const base = y + (front ? 55 : 50);
+    for (const sx of front ? [5, 12, 19, 26] : [9, 16, 23, 30]) {
+      ctx.fillStyle = 'rgba(10,12,30,0.8)';
+      ctx.fillRect(x + sx - 1.6, base - 0.4, 3.2, 0.8);
       if (!h) continue;
-      ctx.fillStyle = PAL.spike;
-      ctx.fillRect(x + sx, Y - h, 1, h);
-      ctx.fillStyle = PAL.pillarLo;
-      ctx.fillRect(x + sx + 1, Y - h + 3, 1, h - 3);
-      ctx.fillStyle = PAL.spikeTip;
-      ctx.fillRect(x + sx, Y - h, 1, 1);
+      poly(ctx, [x + sx - 1.1, base], [x + sx + 1.1, base], [x + sx, base - h]);
+      ctx.fillStyle = hgrad(ctx, x + sx - 1.1, x + sx + 1.1, ['#ffffff', '#b8bed8', '#555c80']);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(10,12,30,0.6)';
+      ctx.lineWidth = 0.3;
+      ctx.stroke();
+    }
+  }
+
+  plate(ctx, x, y, pressed) {
+    const top = y + (pressed ? 50.5 : 49);
+    const front = y + (pressed ? 55 : 53.5);
+    poly(ctx, [x + 6, front], [x + 25, front], [x + 28, top], [x + 9, top]);
+    ctx.fillStyle = vgrad(ctx, top, front, pressed ? ['#70799f', '#9ea6d6'] : ['#8e96c8', '#e0e4fa']);
+    ctx.fill();
+    ctx.strokeStyle = C.line;
+    ctx.lineWidth = 0.4;
+    ctx.stroke();
+    if (!pressed) {
+      ctx.fillStyle = vgrad(ctx, front, front + 1.8, C.front);
+      ctx.fillRect(x + 6, front, 19, 1.8);
     }
   }
 
   potion(ctx, x, y, kind, seed) {
     const big = kind === 'life';
-    const cx = x + 16;
-    const by = y + 55;
-    const w = big ? 7 : 5;
-    const h = big ? 7 : 5;
-    ctx.fillStyle = PAL.glass;
-    ctx.fillRect(cx - (w >> 1) - 1, by - h - 1, w + 2, h + 1);
-    ctx.fillRect(cx - 1, by - h - 5, 3, 4);
-    ctx.fillStyle = big ? PAL.green : PAL.red;
-    ctx.fillRect(cx - (w >> 1), by - h, w, h);
-    ctx.fillStyle = PAL.cork;
-    ctx.fillRect(cx - 1, by - h - 6, 3, 1);
-    const b = (this.frame + seed * 3) % 10;
-    if (b < 6) {
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(cx + ((seed + this.frame) % 2), by - h - 7 - b, 1, 1);
+    const cx = x + 17;
+    const r = big ? 3.6 : 2.9;
+    const cy = y + 54.2 - r;
+    const liquid = big ? ['#b6ffb0', '#28c040', '#0a5a18'] : ['#ffb0a8', '#e8282a', '#6a0a10'];
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, 9);
+    glow.addColorStop(0, big ? 'rgba(80,255,100,0.25)' : 'rgba(255,60,60,0.22)');
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(cx - 9, cy - 9, 18, 18);
+    ctx.restore();
+    ctx.fillStyle = 'rgba(200,220,255,0.55)';
+    ctx.fillRect(cx - 0.9, cy - r - 3.2, 1.8, 3.4);
+    ctx.fillStyle = '#8a6a3a';
+    ctx.fillRect(cx - 1.1, cy - r - 4.2, 2.2, 1.2);
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    const g = ctx.createRadialGradient(cx - r * 0.4, cy - r * 0.4, 0.2, cx, cy, r);
+    liquid.forEach((c, i) => g.addColorStop(i / 2, c));
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(220,230,255,0.8)';
+    ctx.lineWidth = 0.4;
+    ctx.stroke();
+    const b = (this.frame + seed * 3) % 12;
+    if (b < 8) {
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.beginPath();
+      ctx.arc(cx + Math.sin(b) * 0.5, cy - r - 4 - b * 0.8, 0.45, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 
-  exitDoor(ctx, x, y, open) {
-    const h = Math.round((1 - open) * 45);
-    if (h <= 0) return;
-    ctx.fillStyle = PAL.door;
-    ctx.fillRect(x + 12, y + 10, 40, h);
-    ctx.fillStyle = PAL.doorLine;
-    for (let yy = y + 13; yy < y + 10 + h; yy += 4) ctx.fillRect(x + 12, yy, 40, 1);
-    ctx.fillStyle = PAL.blockHi;
-    ctx.fillRect(x + 12, y + 9 + h, 40, 1);
+  floorSword(ctx, x, y) {
+    const yy = y + 52.5;
+    ctx.fillStyle = 'rgba(0,0,10,0.35)';
+    ctx.beginPath();
+    ctx.ellipse(x + 17, yy + 1.3, 11, 1.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    poly(ctx, [x + 9, yy - 0.6], [x + 27, yy - 0.1], [x + 27.8, yy + 0.2], [x + 9, yy + 0.6]);
+    ctx.fillStyle = vgrad(ctx, yy - 0.6, yy + 0.6, ['#ffffff', '#8c94b8']);
+    ctx.fill();
+    ctx.fillStyle = C.gold;
+    ctx.fillRect(x + 8, yy - 2.2, 1, 4.4);
+    ctx.fillStyle = '#4a2c14';
+    ctx.fillRect(x + 5, yy - 0.6, 3, 1.2);
+    if (this.frame % 30 < 3) {
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.beginPath();
+      ctx.arc(x + 12 + (this.frame % 30) * 5, yy - 0.2, 0.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  exitDoor(ctx, x, y, open, grain) {
+    const h = (1 - open) * 37;
+    if (h <= 0.2) return;
+    ctx.fillStyle = vgrad(ctx, y + 9, y + 9 + h, ['#5c6598', '#434b7c']);
+    ctx.fillRect(x + 12, y + 9, 40, h);
+    ctx.fillStyle = grain;
+    ctx.fillRect(x + 12, y + 9, 40, h);
+    ctx.fillStyle = 'rgba(10,12,40,0.5)';
+    for (let yy = y + 13; yy < y + 9 + h; yy += 5) ctx.fillRect(x + 12, yy, 40, 0.6);
+    ctx.fillStyle = 'rgba(220,226,255,0.7)';
+    ctx.fillRect(x + 12, y + 9 + h - 0.7, 40, 0.7);
   }
 
   gates(ctx, level, rx, ry) {
-    for (let r = 0; r < ROOM_ROWS; r++) {
-      for (let c = 0; c < ROOM_COLS; c++) {
-        const tl = level.tile(rx * ROOM_COLS + c, ry * ROOM_ROWS + r);
-        if (tl.t !== T.GATE) continue;
-        const x = c * TILE_W;
-        const y = r * TILE_H;
-        const h = Math.round((1 - tl.open) * 50);
-        ctx.fillStyle = PAL.gate;
-        ctx.fillRect(x + 21, y, 11, 4);
-        if (h <= 0) continue;
-        for (const bx of [22, 25, 28, 31]) {
-          ctx.fillStyle = PAL.gate;
-          ctx.fillRect(x + bx, y + 4, 1, h);
-          ctx.fillStyle = PAL.gateHi;
-          ctx.fillRect(x + bx - 1, y + 4, 1, h);
-        }
-        ctx.fillStyle = PAL.gateHi;
-        for (let yy = y + 10; yy < y + 4 + h; yy += 7) ctx.fillRect(x + 21, yy, 11, 1);
-        ctx.fillRect(x + 21, y + 3 + h, 11, 1);
+    this.eachTile(rx, ry, (c, r, x, y) => {
+      const tl = level.tile(c, r);
+      if (tl.t !== T.GATE) return;
+      ctx.fillStyle = vgrad(ctx, y, y + 3.5, ['#4a4a5c', '#15151f']);
+      ctx.fillRect(x + 19.5, y, 13, 3.5);
+      const h = (1 - tl.open) * 50;
+      if (h <= 0.5) return;
+      for (const bx of [21, 24.5, 28, 31.5]) {
+        ctx.fillStyle = hgrad(ctx, bx - 0.8, bx + 0.8, ['#9ca0b8', '#3a3c4c', '#16161e']);
+        ctx.fillRect(x + bx - 0.8, y + 3.5, 1.6, h);
+        poly(ctx, [x + bx - 0.9, y + 3.5 + h], [x + bx + 0.9, y + 3.5 + h], [x + bx, y + 5.5 + h]);
+        ctx.fill();
       }
-    }
+      for (let yy = y + 9; yy < y + 3.5 + h; yy += 8) {
+        ctx.fillStyle = vgrad(ctx, yy, yy + 1.4, ['#8c90a8', '#23252f']);
+        ctx.fillRect(x + 20, yy, 12.5, 1.4);
+      }
+    });
   }
 
-  // ---- characters ----------------------------------------------------------
-
-  // ---- screens -------------------------------------------------------------
+  // ---- composition ---------------------------------------------------------
 
   drawRoom(game, rx, ry, withChars = true) {
     const ctx = this.ctx;
     const level = game.level;
+    const key = `${rx},${ry},${level.version},${level.def.name}`;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(this.layer('bg', key, (c) => this.drawBackground(c, level, rx, ry)), 0, 0);
+    this.logical(ctx);
     ctx.save();
     ctx.beginPath();
     ctx.rect(0, 0, ROOM_W, ROOM_H);
     ctx.clip();
-    ctx.drawImage(this.staticRoom(level, rx, ry), 0, 0);
-    this.dynamicTiles(ctx, level, rx, ry);
+    this.drawDynamic(ctx, level, rx, ry);
+
     if (withChars) {
       const ox = rx * ROOM_W;
       const oy = ry * ROOM_H;
       const visible = (x, y) => x > ox - 30 && x < ox + ROOM_W + 30 && y > oy - 10 && y < oy + ROOM_H + 60;
-      for (const g of game.guards) {
-        if (visible(g.x, g.y)) this.sprites.draw(ctx, guardJoints(g), 'guard', g.alive, ox, oy);
-      }
       const p = game.prince;
-      if (visible(p.x, p.y) && !(p.state === 'exit' && p.t > 12)) {
-        this.sprites.draw(ctx, princeJoints(p), 'prince', p.armed, ox, oy);
+      const showPrince = visible(p.x, p.y) && !(p.state === 'exit' && p.t > 12);
+      for (const g of game.guards) if (visible(g.x, g.y)) drawShadow(ctx, g.x - ox, g.y - oy);
+      if (showPrince && (p.onGround || !p.alive)) drawShadow(ctx, p.x - ox, p.y - oy);
+      for (const g of game.guards) {
+        if (visible(g.x, g.y)) drawCharacter(ctx, guardJoints(g), 'guard', g.alive, ox, oy);
+      }
+      if (showPrince) {
+        ctx.save();
+        if (p.state === 'exit') ctx.globalAlpha = Math.max(0, 1 - p.t / 12);
+        drawCharacter(ctx, princeJoints(p), 'prince', p.armed, ox, oy);
+        ctx.restore();
       }
     }
-    ctx.drawImage(this.foreground(level, rx, ry), 0, 0);
-    for (let r = 0; r < ROOM_ROWS; r++) {
-      for (let c = 0; c < ROOM_COLS; c++) {
-        const tl = level.tile(rx * ROOM_COLS + c, ry * ROOM_ROWS + r);
-        if (tl.t === T.SPIKES) this.spikes(ctx, c * TILE_W, r * TILE_H, tl.ext, true);
-      }
-    }
+
+    ctx.restore();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(this.layer('fg', key, (c) => this.drawForeground(c, level, rx, ry)), 0, 0);
+    this.logical(ctx);
+    this.eachTile(rx, ry, (c, r, x, y) => {
+      const tl = level.tile(c, r);
+      if (tl.t === T.SPIKES) this.spikes(ctx, x, y, tl.ext, true);
+    });
     this.gates(ctx, level, rx, ry);
     if (game.flash > 0) {
-      ctx.globalAlpha = 0.45;
+      ctx.globalAlpha = 0.4;
       ctx.fillStyle = game.flashColor;
       ctx.fillRect(0, 0, ROOM_W, ROOM_H);
       ctx.globalAlpha = 1;
     }
+  }
+
+  // Text is counter-scaled so letters keep their shape on the 4:3 stretch.
+  text(str, x, y, size, color, align = 'center', weight = 700) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(1, this.sx / this.sy);
+    ctx.font = `${weight} ${size}px ${FONT}`;
+    ctx.textAlign = align;
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillText(str, size * 0.06, size * 0.08);
+    ctx.fillStyle = color;
+    ctx.fillText(str, 0, 0);
     ctx.restore();
+  }
+
+  flask(x, y, full, color) {
+    const ctx = this.ctx;
+    poly(ctx, [x, y + 7.5], [x + 6, y + 7.5], [x + 3, y]);
+    if (full) {
+      ctx.fillStyle = vgrad(ctx, y, y + 7.5, ['#ffffff', color, '#300008']);
+      ctx.fill();
+    }
+    ctx.strokeStyle = full ? 'rgba(255,255,255,0.5)' : color;
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
   }
 
   statusBar(game, touch) {
     const ctx = this.ctx;
     const y = ROOM_H;
-    ctx.fillStyle = '#000';
+    ctx.fillStyle = vgrad(ctx, y, SCREEN_H, ['#0a0a14', '#000000']);
     ctx.fillRect(0, y, SCREEN_W, SCREEN_H - y);
     const p = game.prince;
-    for (let i = 0; i < p.maxHp; i++) this.triangle(2 + i * 8, y + 2, i < p.hp, PAL.hp, PAL.hpEmpty);
+    for (let i = 0; i < p.maxHp; i++) this.flask(3 + i * 8, y + 2, i < p.hp, C.hp);
 
     const { rx, ry } = game.room();
     const g = game.guards.find(
       (g) => g.alive && g.state !== 'guard' && Math.floor(g.x / ROOM_W) === rx && Math.floor((g.y - 1) / ROOM_H) === ry,
     );
-    if (g) {
-      for (let i = 0; i < g.maxHp; i++) this.triangle(SCREEN_W - 9 - i * 8, y + 2, i < g.hp, PAL.guardHp, '#182a6c');
-    }
+    if (g) for (let i = 0; i < g.maxHp; i++) this.flask(SCREEN_W - 9 - i * 8, y + 2, i < g.hp, C.guardHp);
 
-    let text = game.msg?.text;
+    let msg = game.msg?.text;
     if (!p.alive && game.deadTicks > 20) {
-      text = this.frame % 20 < 14 ? (touch ? 'PRESS ACTION TO CONTINUE' : 'PRESS SHIFT TO CONTINUE') : '';
+      msg = this.frame % 20 < 14 ? (touch ? 'Press Action to continue' : 'Press Shift to continue') : '';
     }
-    if (text) drawText(ctx, text, SCREEN_W / 2, y + 2, PAL.text, 1, 'center');
-  }
-
-  triangle(x, y, full, color, empty) {
-    const ctx = this.ctx;
-    ctx.fillStyle = full ? color : empty;
-    for (let j = 0; j < 7; j++) {
-      const half = j >> 1;
-      if (full || j === 6) ctx.fillRect(x + 3 - half, y + j, 1 + half * 2, 1);
-      else {
-        ctx.fillRect(x + 3 - half, y + j, 1, 1);
-        ctx.fillRect(x + 3 + half, y + j, 1, 1);
-      }
-    }
+    if (msg) this.text(msg, SCREEN_W / 2, y + 5.6, 6.4, C.text);
   }
 
   play(game, touch) {
@@ -617,57 +721,66 @@ export class Renderer {
   }
 
   dim(alpha) {
-    this.ctx.globalAlpha = alpha;
-    this.ctx.fillStyle = '#000';
-    this.ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
-    this.ctx.globalAlpha = 1;
+    const ctx = this.ctx;
+    ctx.fillStyle = `rgba(0,0,8,${alpha})`;
+    ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
   }
 
   title(game, touch) {
     const ctx = this.ctx;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     this.drawRoom(game, 0, 0, false);
-    this.dim(0.7);
-    drawText(ctx, 'PRINCE OF PERSIA', SCREEN_W / 2 + 2, 42, '#6c1818', 2, 'center');
-    drawText(ctx, 'PRINCE OF PERSIA', SCREEN_W / 2, 40, PAL.gold, 2, 'center');
-    drawText(ctx, 'A TRIBUTE TO THE 1989 CLASSIC', SCREEN_W / 2, 64, PAL.text, 1, 'center');
-    drawText(ctx, 'ORIGINAL GAME BY JORDAN MECHNER', SCREEN_W / 2, 76, '#a4a4c0', 1, 'center');
-
+    this.logical(ctx);
+    this.dim(0.62);
+    ctx.save();
+    ctx.translate(SCREEN_W / 2, 44);
+    ctx.scale(1, this.sx / this.sy);
+    ctx.font = `700 25px ${FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(60,0,0,0.9)';
+    ctx.fillText('Prince of Persia', 1.2, 1.6);
+    const gg = ctx.createLinearGradient(0, -12, 0, 12);
+    gg.addColorStop(0, '#fff3b0');
+    gg.addColorStop(0.5, '#f0c040');
+    gg.addColorStop(1, '#a86a10');
+    ctx.fillStyle = gg;
+    ctx.fillText('Prince of Persia', 0, 0);
+    ctx.restore();
+    this.text('A tribute to the 1989 classic', SCREEN_W / 2, 66, 8, C.text, 'center', 600);
+    this.text('Original game by Jordan Mechner', SCREEN_W / 2, 77, 6, C.dimText, 'center', 600);
     const help = touch
-      ? ['PAD: RUN, CROUCH, CLIMB', 'JUMP: JUMP UP OR AHEAD, PARRY', 'ACTION: CAREFUL STEP, DRINK,', 'TAKE THE SWORD, STRIKE']
-      : ['ARROWS: RUN, JUMP, CROUCH, CLIMB', 'UP+ARROW: JUMP AHEAD   UP: PARRY', 'SHIFT+ARROW: CAREFUL STEP', 'SHIFT: DRINK, TAKE SWORD, STRIKE'];
-    help.forEach((l, i) => drawText(ctx, l, SCREEN_W / 2, 104 + i * 11, '#a4a4c0', 1, 'center'));
-    if (this.frame % 20 < 14) {
-      drawText(ctx, touch ? 'TAP TO BEGIN' : 'PRESS ENTER TO BEGIN', SCREEN_W / 2, 164, PAL.text, 1, 'center');
-    }
+      ? ['Pad: run, crouch, climb', 'Jump: jump up or ahead · parry', 'Action: careful step, drink,', 'take the sword, strike']
+      : ['Arrows: run, jump, crouch, climb', 'Up + arrow: jump ahead · Up: parry', 'Shift + arrow: careful step', 'Shift: drink, take the sword, strike'];
+    help.forEach((l, i) => this.text(l, SCREEN_W / 2, 104 + i * 11, 6.4, C.dimText, 'center', 600));
+    if (this.frame % 20 < 14) this.text(touch ? 'Tap to begin' : 'Press Enter to begin', SCREEN_W / 2, 164, 8, C.text);
   }
 
   endScreen(game, touch) {
-    const ctx = this.ctx;
     this.play(game, touch);
-    this.dim(0.65);
+    this.dim(0.62);
     const won = game.mode === 'won';
-    drawText(ctx, won ? 'YOU ESCAPED THE DUNGEON' : 'TIME HAS EXPIRED', SCREEN_W / 2, 60, won ? PAL.gold : PAL.red, 1, 'center');
+    this.text(won ? 'You escaped the dungeon' : 'Time has expired', SCREEN_W / 2, 62, 12, won ? C.gold : C.hp);
     if (won) {
       const m = game.minutesLeft();
-      drawText(ctx, `${m} MINUTE${m === 1 ? '' : 'S'} LEFT`, SCREEN_W / 2, 80, PAL.text, 1, 'center');
-      drawText(ctx, 'THE PRINCESS AWAITS...', SCREEN_W / 2, 96, '#a4a4c0', 1, 'center');
+      this.text(`${m} minute${m === 1 ? '' : 's'} left`, SCREEN_W / 2, 82, 7.5, C.text, 'center', 600);
+      this.text('The Princess awaits…', SCREEN_W / 2, 96, 7, C.dimText, 'center', 600);
     }
-    if (this.frame % 20 < 14) {
-      drawText(ctx, touch ? 'TAP TO PLAY AGAIN' : 'PRESS ENTER TO PLAY AGAIN', SCREEN_W / 2, 130, PAL.text, 1, 'center');
-    }
+    if (this.frame % 20 < 14) this.text(touch ? 'Tap to play again' : 'Press Enter to play again', SCREEN_W / 2, 130, 7.5, C.text);
   }
 
   paused(game, touch) {
     this.play(game, touch);
     this.dim(0.5);
-    drawText(this.ctx, 'PAUSED', SCREEN_W / 2, 80, PAL.text, 2, 'center');
-    drawText(this.ctx, touch ? 'TAP TO CONTINUE' : 'PRESS P TO CONTINUE', SCREEN_W / 2, 110, '#a4a4c0', 1, 'center');
+    this.text('Paused', SCREEN_W / 2, 84, 16, C.text);
+    this.text(touch ? 'Tap to continue' : 'Press P to continue', SCREEN_W / 2, 108, 7, C.dimText, 'center', 600);
   }
 
   render(game, { touch, paused }) {
     this.frame++;
+    this.logical(this.ctx);
     if (game.mode === 'title') this.title(game, touch);
     else if (paused) this.paused(game, touch);
     else if (game.mode === 'play') this.play(game, touch);
