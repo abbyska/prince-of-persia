@@ -18,8 +18,8 @@ const FONT = "'Cinzel', 'Trajan Pro', Georgia, 'Times New Roman', serif";
 const C = {
   void: '#000000',
   mark: '#22305a',
-  mortar: '#1e2844',
-  stone: ['#7280a0', '#6b7999', '#7a88a8'],
+  mortar: '#0b0f20',
+  stone: ['#7684a6', '#6d7b9d', '#7e8cae', '#68769a'],
   stoneHi: '#a4b1cc',
   stoneLo: '#2f3b5a',
   stoneSpeck: '#4b597b',
@@ -27,6 +27,7 @@ const C = {
   topBack: '#3e4a68',
   topEdge: '#8c9aba',
   side: '#26305a',
+  sideLight: '#46527e',
   sideDark: '#0e1428',
   flame: ['#fff6c0', '#ffc040', '#ff6a1a', 'rgba(200,30,0,0)'],
   gold: '#f0c850',
@@ -83,6 +84,17 @@ export class Renderer {
     dc.fillRect(0, 0, cell, cell);
     dc.fillRect(cell, cell, cell, cell);
     this.ditherCanvas = d;
+    // Fine stone grain, drawn at device resolution.
+    const g = document.createElement('canvas');
+    g.width = g.height = 128;
+    const gc = g.getContext('2d');
+    for (let i = 0; i < 2600; i++) {
+      const v = Math.random();
+      gc.fillStyle = v < 0.5 ? `rgba(255,255,255,${0.04 + v * 0.06})` : `rgba(0,0,20,${0.05 + (v - 0.5) * 0.12})`;
+      gc.fillRect(Math.random() * 128, Math.random() * 128, 1 + (v > 0.9), 1);
+    }
+    this.grainCanvas = g;
+    this.patterns = new WeakMap();
   }
 
   logical(ctx) {
@@ -119,7 +131,26 @@ export class Renderer {
 
   // ---- static background ---------------------------------------------------
 
+  // Warm torchlight on nearby stone. 'overlay' leaves black space black.
+  torchLight(ctx, level, rx, ry) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'overlay';
+    this.eachTile(rx, ry, (c, r, x, y) => {
+      if (level.tile(c, r).t !== T.TORCH) return;
+      const g = ctx.createRadialGradient(x + 16, y + 16, 2, x + 16, y + 16, 80);
+      g.addColorStop(0, 'rgba(255,170,80,0.75)');
+      g.addColorStop(0.5, 'rgba(255,140,60,0.25)');
+      g.addColorStop(1, 'rgba(255,120,40,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x - 64, y - 64, 160, 160);
+    });
+    ctx.restore();
+  }
+
   drawBackground(ctx, level, rx, ry) {
+    // Solid black first, so no hairline gaps show between tiles.
+    ctx.fillStyle = C.void;
+    ctx.fillRect(0, 0, ROOM_W, ROOM_H);
     this.eachTile(rx, ry, (c, r, x, y) => {
       if (level.isWall(c, r)) this.wallFace(ctx, x, y, c, r);
       else this.backWall(ctx, x, y, c, r);
@@ -152,6 +183,7 @@ export class Renderer {
           break;
       }
     });
+    this.torchLight(ctx, level, rx, ry);
   }
 
   // Open space behind the platforms is dark, with only a faint dotted outline
@@ -178,25 +210,49 @@ export class Renderer {
     ctx.setLineDash([]);
   }
 
-  // One dressed stone: flat slate face, lit top-left edge, dark bottom-right
-  // edge and a few chisel marks.
+  // One dressed stone, carved in relief: a shaded face, chamfered edges lit
+  // from the top left and dark on the bottom right, grain and a few pits.
   stoneFace(ctx, x, y, w, h, seed) {
+    if (w <= 0 || h <= 0) return;
     ctx.fillStyle = C.stone[seed % C.stone.length];
     ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = C.stoneHi;
-    ctx.fillRect(x, y, w, 0.9);
-    ctx.fillRect(x, y, 0.9, h);
-    ctx.fillStyle = C.stoneLo;
-    ctx.fillRect(x, y + h - 1.1, w, 1.1);
-    ctx.fillRect(x + w - 1.1, y, 1.1, h);
-    ctx.fillStyle = C.stoneSpeck;
+    const g = ctx.createLinearGradient(x, y, x + w * 0.3, y + h);
+    g.addColorStop(0, 'rgba(255,255,255,0.16)');
+    g.addColorStop(0.55, 'rgba(255,255,255,0)');
+    g.addColorStop(1, 'rgba(0,0,24,0.28)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = this.pattern(ctx, 'grain');
+    ctx.fillRect(x, y, w, h);
+
+    const b = Math.min(2, w / 4, h / 4);
+    poly(ctx, [x, y], [x + w, y], [x + w - b, y + b], [x + b, y + b]);
+    ctx.fillStyle = 'rgba(235,240,255,0.55)';
+    ctx.fill();
+    poly(ctx, [x, y], [x + b, y + b], [x + b, y + h - b], [x, y + h]);
+    ctx.fillStyle = 'rgba(225,232,255,0.3)';
+    ctx.fill();
+    poly(ctx, [x, y + h], [x + b, y + h - b], [x + w - b, y + h - b], [x + w, y + h]);
+    ctx.fillStyle = 'rgba(4,6,24,0.6)';
+    ctx.fill();
+    poly(ctx, [x + w, y], [x + w, y + h], [x + w - b, y + h - b], [x + w - b, y + b]);
+    ctx.fillStyle = 'rgba(4,6,24,0.42)';
+    ctx.fill();
+
     for (let k = 0; k < 3; k++) {
       const s = hash(seed, k, 3);
-      if (s % 3 === 0 || w < 6 || h < 5) continue;
-      const px = x + 2 + (s % Math.max(1, w - 5));
-      const py = y + 2 + ((s >>> 6) % Math.max(1, h - 4));
-      ctx.fillRect(px, py, 1.2, 0.7);
-      ctx.fillRect(px + 1.2, py + 0.7, 0.7, 0.7);
+      if (s % 3 === 0 || w < 8 || h < 7) continue;
+      const px = x + b + 1 + (s % Math.max(1, w - 2 * b - 3));
+      const py = y + b + 1 + ((s >>> 6) % Math.max(1, h - 2 * b - 3));
+      const r = 0.5 + ((s >>> 12) % 3) * 0.3;
+      ctx.fillStyle = 'rgba(10,14,40,0.55)';
+      ctx.beginPath();
+      ctx.ellipse(px, py, r * 1.4, r, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(230,236,255,0.35)';
+      ctx.beginPath();
+      ctx.ellipse(px + 0.3, py + r * 0.8, r * 1.2, r * 0.45, 0, 0, Math.PI);
+      ctx.fill();
     }
   }
 
@@ -227,34 +283,58 @@ export class Renderer {
     for (let i = 0; i < 3; i++) this.course(ctx, x, y + i * 21, 21, c, 1000 + r * 3 + i);
   }
 
-  // Top surface of a slab (floor or stone block): a flat slate band whose
-  // back edge is shifted right, so the left end of a platform slants back.
+  // Top surface of a slab (floor or stone block), receding towards the back:
+  // dark at the back, lit towards the front, with a bright bevelled edge.
   topSurface(ctx, x, top, front) {
     poly(ctx, [x, front], [x + TILE_W, front], [x + TILE_W + SKEW, top], [x + SKEW, top]);
-    ctx.fillStyle = C.top;
+    ctx.fillStyle = vgrad(ctx, top, front, ['#2c3656', '#56648a', '#8190b4', '#9aa8ca']);
     ctx.fill();
-    poly(ctx, [x + SKEW, top], [x + TILE_W + SKEW, top], [x + TILE_W + SKEW - 0.4, top + 1], [x + SKEW - 0.4, top + 1]);
-    ctx.fillStyle = C.topBack;
+    ctx.fillStyle = this.pattern(ctx, 'grain');
     ctx.fill();
+    // Joint receding into the surface at the tile's right edge.
+    ctx.strokeStyle = 'rgba(8,10,30,0.45)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(x + TILE_W, front);
+    ctx.lineTo(x + TILE_W + SKEW, top);
+    ctx.stroke();
+    ctx.fillStyle = '#d4dcf6';
+    ctx.fillRect(x, front - 1, TILE_W, 1);
   }
 
-  // The dark, dithered side of a block or slab, seen where it ends.
+  // The side of a block or slab where it ends: in shadow, darkening towards
+  // the back, with a lit front corner and the original's checker dither.
   sideFace(ctx, x, top, front, bottom) {
     poly(ctx, [x, front], [x + SKEW, top], [x + SKEW, bottom - (front - top)], [x, bottom]);
-    ctx.fillStyle = C.side;
+    ctx.fillStyle = hgrad(ctx, x, x + SKEW, [C.sideLight, C.side, '#10152c']);
     ctx.fill();
+    ctx.save();
+    ctx.globalAlpha = 0.55;
     ctx.fillStyle = this.dither(ctx);
     ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = 'rgba(200,210,245,0.45)';
+    ctx.fillRect(x, front, 0.7, bottom - front);
+  }
+
+  // Device-resolution patterns (checker dither, stone grain), cached per context.
+  pattern(ctx, name) {
+    let m = this.patterns.get(ctx);
+    if (!m) this.patterns.set(ctx, (m = {}));
+    if (!m[name]) {
+      const p = ctx.createPattern(name === 'dither' ? this.ditherCanvas : this.grainCanvas, 'repeat');
+      try {
+        p.setTransform(new DOMMatrix([1 / this.sx, 0, 0, 1 / this.sy, 0, 0]));
+      } catch {
+        // Without pattern transforms the texture is just coarser.
+      }
+      m[name] = p;
+    }
+    return m[name];
   }
 
   dither(ctx) {
-    const p = ctx.createPattern(this.ditherCanvas, 'repeat');
-    try {
-      p.setTransform(new DOMMatrix([1 / this.sx, 0, 0, 1 / this.sy, 0, 0]));
-    } catch {
-      // Without pattern transforms the checker is just finer.
-    }
-    return p;
+    return this.pattern(ctx, 'dither');
   }
 
   // Stone block: top surface where open above, side face where open to the right.
