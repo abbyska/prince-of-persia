@@ -9,16 +9,17 @@
 //   '*' plate that opens the exit door     '[' ']' exit door (two tiles)
 //
 // Each row below is written room by room (4 rooms across, 2 rooms down).
-// The hall under the lower corridor is scenery, as in many of the original's rooms.
+// As in the original, most platforms stand on solid masonry; the openings
+// below the lower corridor are scenery.
 export const LEVEL1 = {
   name: 'LEVEL 1',
   map: [
-    '##########' + '__________' + '__________' + '##########',
-    '#         ' + '       _/#' + '          ' + '         #',
+    '##########' + '##########' + '#####_____' + '##########',
+    '#       ##' + '##     _/#' + '##        ' + '    ######',
     '#__t__~___' + '_t_  __|__' + '__^__t_h__' + '___ _t[]_#',
     '#___t_____' + '_____H_###' + '#a*_t_^_A_' + '_a__######',
-    '#         ' + '       ###' + '#         ' + '    ######',
-    '#_|__t__|_' + '_t__|__###' + '#__|_t__|_' + '_t__######',
+    '######  ##' + '###   ####' + '###  #####' + '##  ######',
+    '######_|##' + '###_|_####' + '###|_#####' + '##__######',
   ],
   start: { col: 2, row: 2, dir: 1 },
   guards: [{ col: 26, row: 2, dir: -1, hp: 3, skill: 0.35 }],

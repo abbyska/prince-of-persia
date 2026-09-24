@@ -200,25 +200,31 @@ export class Renderer {
     }
   }
 
-  // A course of stones of uneven width, cut to [x, x + TILE_W).
-  course(ctx, x, y, h, c, row) {
-    let bx = -(hash(c, row, 1) % 12);
+  // A course of stones of uneven width. Joints are laid out along the whole
+  // row of the world, so stones run on across tile boundaries; each tile draws
+  // the part of the row inside it.
+  course(ctx, x, y, h, c, row, width = TILE_W) {
+    const x0 = c * TILE_W;
+    let bx = -(hash(0, row, 1) % 20);
     let j = 0;
-    while (bx < TILE_W) {
-      const w = 13 + (hash(c + 7, row, j) % 9);
-      const a = Math.max(0, bx);
-      const b = Math.min(TILE_W, bx + w);
-      if (b - a > 0.5) this.stoneFace(ctx, x + a + 0.4, y + 0.4, b - a - 0.8, h - 0.8, hash(c * 5 + j, row, 9));
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, width, h);
+    ctx.clip();
+    while (bx < x0 + width) {
+      const w = 14 + (hash(j, row, 7) % 9);
+      if (bx + w > x0) this.stoneFace(ctx, x + bx - x0 + 0.4, y + 0.4, w - 0.8, h - 0.8, hash(j, row, 9));
       bx += w;
       j++;
     }
+    ctx.restore();
   }
 
   // Solid masonry: three courses of large stones.
   wallFace(ctx, x, y, c, r) {
     ctx.fillStyle = C.mortar;
     ctx.fillRect(x, y, TILE_W, TILE_H);
-    for (let i = 0; i < 3; i++) this.course(ctx, x, y + i * 21, 21, c, r * 3 + i);
+    for (let i = 0; i < 3; i++) this.course(ctx, x, y + i * 21, 21, c, 1000 + r * 3 + i);
   }
 
   // Top surface of a slab (floor or stone block): a flat slate band whose
@@ -324,8 +330,7 @@ export class Renderer {
   exitFrame(ctx, x, y) {
     ctx.fillStyle = C.mortar;
     ctx.fillRect(x + 4, y + 2, 56, 44);
-    this.course(ctx, x + 4, y + 2, 7, 90, 1);
-    this.course(ctx, x + 28, y + 2, 7, 91, 2);
+    this.course(ctx, x + 4, y + 2, 7, 200, 1, 56);
     for (const sx of [x + 4, x + 52]) {
       for (let i = 0; i < 5; i++) this.stoneFace(ctx, sx + 0.3, y + 9 + i * 7.4 + 0.3, 7.4, 6.8, hash(sx, i, 4));
     }
