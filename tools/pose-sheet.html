@@ -1,0 +1,47 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Pose sheet</title>
+<style>
+  body { margin: 0; background: #000; color: #aab; font: 12px monospace; }
+  canvas { display: block; }
+</style>
+<!-- Development aid: every animation frame of the Prince, one row per move.
+     Run `npm run dev` and open /tools/pose-sheet.html -->
+<canvas id="c"></canvas>
+<script type="module">
+  import { princeJoints } from '../src/figure.js';
+  import { drawCharacter } from '../src/character.js';
+
+  const rows = [
+    ['run', 8], ['startrun', 4], ['stop', 3], ['turn', 3], ['standjump', 10], ['runjump', 9],
+    ['jumpup', 7], ['jumpgrab', 4], ['climb', 9], ['climbdown', 7], ['fall', 4], ['landhard', 6],
+    ['step', 6], ['drink', 8], ['pickup', 7], ['strike', 6], ['advance', 3], ['dead', 3],
+  ];
+  const S = 3, CW = 44, RH = 72;
+  const cv = document.getElementById('c');
+  cv.width = (80 + CW * 10) * S;
+  cv.height = rows.length * RH * S;
+  const ctx = cv.getContext('2d');
+  rows.forEach(([state, n], r) => {
+    ctx.setTransform(S, 0, 0, S, 0, 0);
+    ctx.fillStyle = '#aab';
+    ctx.font = '8px monospace';
+    ctx.fillText(state, 4, r * RH + 40);
+    for (let t = 0; t < n; t++) {
+      const x = 80 + t * CW + 16;
+      const y = r * RH + 60;
+      const p = {
+        state, t, x, y, dir: 1, yOff: 0, runPhase: t / 8, edgeX: x + 6, ledgeRow: 0, deathCause: 'sword',
+      };
+      if (state === 'climb' || state === 'climbdown' || state === 'jumpgrab') {
+        // floorY(0) = 55: put the ledge 44 above the feet line.
+        ctx.setTransform(S, 0, 0, S, 0, (y - 44 - 55) * S);
+        p.y = 55 + 44;
+      }
+      ctx.fillStyle = '#334';
+      ctx.fillRect(x - 20, (p.y ?? y), 40, 0.5);
+      drawCharacter(ctx, princeJoints(p), 'prince', state === 'strike', 0, 0);
+      ctx.setTransform(S, 0, 0, S, 0, 0);
+    }
+  });
+</script>

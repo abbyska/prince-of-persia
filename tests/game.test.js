@@ -62,21 +62,31 @@ test('game speed does not depend on anything but ticks', () => {
   assert.equal(a.prince.x, b.prince.x);
 });
 
+test('the Prince drops into the cell without harm', () => {
+  const game = newGame();
+  const { settle } = driver(game);
+  assert.equal(game.prince.state, 'fall');
+  settle();
+  assert.equal(game.prince.row, 2);
+  assert.equal(game.prince.hp, 3);
+});
+
 test('falling three floors is fatal, one floor is safe', () => {
   const game = newGame();
+  const { settle, until } = driver(game);
+  settle();
   const p = game.prince;
   p.startFall(0, p.row);
   p.fallFrom = p.row - 3;
-  const { until } = driver(game);
-  // Force a landing on the current floor from "three rows up".
   until({}, () => p.state !== 'fall', 20);
   assert.equal(p.state, 'dead');
 
+  // Stand on a loose floor until it gives way: one floor down is safe.
   const g2 = newGame();
   const d2 = driver(g2);
   d2.settle();
-  // Walk off the loose-floor hole: stand on the loose tile until it drops.
-  g2.prince.x = 6 * TILE_W + 16;
+  g2.guards.length = 0;
+  g2.prince.x = 12 * TILE_W + 16;
   d2.until({}, () => g2.prince.state === 'fall', 30, 'loose floor to drop');
   d2.until({}, () => g2.prince.state !== 'fall', 30, 'landing');
   assert.ok(g2.prince.alive);
@@ -84,89 +94,102 @@ test('falling three floors is fatal, one floor is safe', () => {
   assert.equal(g2.prince.hp, 3);
 });
 
+test('a short jump only catches the ledge when UP is held', () => {
+  for (const hold of [false, true]) {
+    const game = newGame();
+    const { settle, until } = driver(game);
+    settle();
+    const p = game.prince;
+    // Standing jump from the middle of the tile before the two-tile gap.
+    p.x = 15 * TILE_W + 28;
+    until({ right: true, up: true }, () => p.state === 'standjump', 3);
+    until(hold ? { up: true } : {}, () => p.state === 'hang' || p.state === 'fall' || p.state === 'stand', 20);
+    assert.equal(p.state, hold ? 'hang' : 'fall');
+  }
+});
+
 test('running onto spikes kills, stepping carefully does not', () => {
+  const place = (game) => {
+    const p = game.prince;
+    p.row = 1;
+    p.y = 1 * 63 + 55;
+    p.x = 22 * TILE_W + 16;
+    p.dir = 1;
+    p.set('stand');
+  };
   const game = newGame();
-  const { tick, settle, until } = driver(game);
-  const p = game.prince;
+  const { settle, until } = driver(game);
   settle();
-  p.x = 20 * TILE_W + 16;
-  until({ right: true }, () => !p.alive || p.col() >= 23, 60, 'run into spikes');
-  assert.equal(p.state, 'dead');
-  assert.equal(p.deathCause, 'spikes');
+  place(game);
+  until({ right: true }, () => !game.prince.alive || game.prince.col() >= 27, 60, 'run into spikes');
+  assert.equal(game.prince.deathCause, 'spikes');
 
   const g2 = newGame();
   const d2 = driver(g2);
   d2.settle();
-  g2.prince.x = 21 * TILE_W + 16;
-  g2.guards.length = 0;
-  for (let i = 0; i < 8; i++) {
+  place(g2);
+  for (let i = 0; i < 20 && g2.prince.col() < 26; i++) {
     d2.until({ right: true, action: true }, () => g2.prince.state === 'step', 5, 'step');
     d2.settle();
   }
   assert.ok(g2.prince.alive);
-  assert.ok(g2.prince.col() >= 23, `crossed spikes (col ${g2.prince.col()})`);
-  void tick;
+  assert.ok(g2.prince.col() >= 26, `crossed spikes (col ${g2.prince.col()})`);
 });
 
 test('the whole level can be completed', () => {
   const game = newGame();
   const p = game.prince;
   const { tick, until, settle } = driver(game);
+  const stepTo = (col, dir) => {
+    const key = dir > 0 ? 'right' : 'left';
+    for (let i = 0; i < 20 && (dir > 0 ? p.col() < col : p.col() > col); i++) {
+      until({ [key]: true, action: true }, () => p.state === 'step' || p.state === 'turn', 5, `step to ${col}`);
+      settle();
+    }
+  };
   settle();
 
-  // 1. Run right across the loose floor and leap the two-tile gap.
-  until({ right: true }, () => p.x >= 392, 100, 'run to gap');
-  until({ right: true, up: true }, () => p.state === 'runjump', 3, 'take off');
-  until({ right: true }, () => p.state !== 'runjump', 20, 'land jump');
-  settle();
-  assert.equal(p.row, 2, 'still on the upper floor');
-  assert.ok(p.col() >= 15, `cleared the gap (col ${p.col()})`);
+  // 1. The cell: step on the plate and wait for the gate.
+  stepTo(4, 1);
+  until({}, () => !game.level.gateClosed(6, 2), 40, 'cell gate to open');
 
-  // 2. Step under the alcove, jump up, grab the ledge and climb.
-  while (p.col() < 16) {
-    until({ right: true, action: true }, () => p.state === 'step', 5, 'step');
-    settle();
-  }
-  until({ up: true }, () => p.state === 'hang', 20, 'grab ledge');
+  // 2. Run over the loose floors and leap the gap.
+  until({ right: true }, () => p.x >= 15 * TILE_W - 2, 100, 'run to the gap');
+  until({ right: true, up: true }, () => p.state === 'runjump', 6, 'take off');
+  until({ right: true }, () => p.state !== 'runjump', 20, 'land the jump');
+  settle();
+  assert.equal(p.row, 2);
+  assert.ok(p.col() >= 18, `cleared the gap (col ${p.col()})`);
+
+  // 3. Climb to the ledge.
+  stepTo(21, 1);
+  until({ up: true }, () => p.state === 'hang', 20, 'grab the ledge');
   until({ up: true }, () => p.state === 'standup', 20, 'climb');
   settle();
   assert.equal(p.row, 1);
 
-  // 3. Take the sword.
-  while (p.col() < 18) {
-    until({ right: true, action: true }, () => p.state === 'step', 5, 'step to sword');
-    settle();
-  }
-  until({ action: true }, () => p.hasSword, 20, 'pick up sword');
+  // 4. Potion, spikes, sword.
+  stepTo(23, 1);
+  until({ action: true }, () => p.state === 'drink', 5, 'drink');
+  settle();
+  stepTo(28, 1);
+  until({ action: true }, () => p.hasSword, 20, 'take the sword');
   settle();
 
-  // 4. Climb back down to the corridor.
-  until({ left: true }, () => p.dir < 0, 10, 'turn');
-  settle();
-  while (p.x - 17 * TILE_W > 12) {
-    until({ left: true, action: true }, () => p.state === 'step', 5, 'step to edge');
-    settle();
-  }
-  until({ down: true }, () => p.state === 'hang', 20, 'climb down');
-  until({ down: true }, () => p.state !== 'hang', 5, 'let go');
-  until({}, () => p.state !== 'fall', 20, 'drop');
+  // 5. Drop down to the guard's corridor.
+  until({ right: true }, () => p.state === 'fall', 30, 'walk off the ledge');
+  until({}, () => p.state !== 'fall', 20, 'land');
   settle();
   assert.equal(p.row, 2);
-
-  // 5. Walk to the spikes and step carefully across them.
-  until({ right: true }, () => p.x >= 21 * TILE_W + 8, 100, 'reach spikes');
-  settle();
-  while (p.col() < 23 && p.state !== 'engarde' && p.state !== 'fight') {
-    until({ right: true, action: true }, () => p.state !== 'stand', 5, 'step over spikes');
-    until({}, () => p.state === 'stand' || p.state === 'fight', 20, 'finish step');
-  }
+  assert.equal(p.hp, 3);
 
   // 6. Duel the guard: parry his strikes, strike back.
   const guard = game.guards[0];
-  for (let i = 0; i < 1500 && guard.alive; i++) {
+  for (let i = 0; i < 2000 && guard.alive; i++) {
     assert.ok(p.alive, `prince died in the fight (${p.deathCause})`);
     const d = Math.abs(guard.x - p.x);
-    if (p.state !== 'fight') tick({});
+    if (p.state === 'stand') tick({ right: true });
+    else if (p.state !== 'fight') tick({});
     else if (guard.state === 'strike' && guard.t >= 1 && guard.t <= 3) tick({ up: true });
     else if (d > 40) tick({ right: true });
     else tick({ action: true });
@@ -174,50 +197,27 @@ test('the whole level can be completed', () => {
   assert.ok(!guard.alive, 'guard defeated');
   until({}, () => p.state === 'stand', 60, 'sheathe');
 
-  // 7. Heal at the potion, then drop down the hole beside the exit.
-  while (p.col() < 27) {
-    until({ right: true, action: true }, () => p.state === 'step', 5, 'step to potion');
-    settle();
-  }
-  until({ action: true }, () => p.state === 'drink', 5, 'drink');
-  settle();
-  until({ right: true }, () => p.state === 'fall', 100, 'walk into the hole');
-  until({}, () => p.state !== 'fall', 20, 'drop to lower corridor');
+  // 7. Fall through the hole by the exit.
+  until({ right: true }, () => p.state === 'fall', 120, 'walk into the hole');
+  until({}, () => p.state !== 'fall', 20, 'drop to the passage');
   settle();
   assert.equal(p.row, 3);
-  assert.ok(p.alive);
 
-  // 8. Go left over the gate plate, through the gate, carefully across the
-  //    spikes, to the exit plate.
-  until({ left: true }, () => p.col() <= 27, 100, 'through the gate');
-  until({}, () => p.state === 'stand', 20);
-  while (p.col() > 25) {
-    until({ left: true, action: true }, () => p.state === 'step', 8, 'step left over spikes');
-    settle();
-  }
-  until({ left: true }, () => p.col() <= 21, 100, 'run to the plates');
+  // 8. Through the gate to the exit plate, and back.
+  until({ left: true }, () => p.col() <= 36, 80, 'reach the exit plate');
   settle();
   assert.ok(game.level.exitOpening, 'exit plate pressed');
+  until({ right: true }, () => p.x >= 41 * TILE_W + 16, 80, 'back under the hole');
+  settle();
 
-  // 9. Back through the gate and climb up beside the exit.
-  until({ right: true }, () => p.col() >= 25, 100, 'run back to spikes');
-  settle();
-  while (p.col() < 27) {
-    until({ right: true, action: true }, () => p.state === 'step', 8, 'step right over spikes');
-    settle();
-  }
-  until({ right: true }, () => p.x >= 33 * TILE_W + 16, 100, 'back to the hole');
-  settle();
-  until({ up: true }, () => p.state === 'hang', 20, 'grab ledge by exit');
+  // 9. Climb up beside the exit and leave.
+  until({ up: true }, () => p.state === 'hang', 20, 'grab the ledge');
   until({ up: true }, () => p.state === 'standup', 20, 'climb up');
   settle();
   assert.equal(p.row, 2);
-
-  // 10. Walk into the open exit.
-  until({ right: true }, () => p.col() >= 36, 60, 'reach the exit');
+  until({ right: true }, () => p.col() >= 45, 60, 'reach the exit');
   settle();
   until({}, () => game.level.exitOpen >= 1, 200, 'door to open');
   until({ up: true }, () => game.mode === 'won', 60, 'leave the level');
   assert.equal(game.mode, 'won');
-  assert.ok(colOf(p.x) >= 36);
 });

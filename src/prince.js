@@ -6,13 +6,17 @@ const HANG_DROP = 44; // feet hang this far below the ledge they hold
 
 // Per-tick horizontal movement for the multi-frame moves. Like the original,
 // movement comes from the animation rather than from free physics.
-const START_DX = [2, 4, 6, 8];
-const RUN_DX = 9;
-const STOP_DX = [6, 3, 1];
-const RUNTURN_DX = [5, 3, 1, 0];
-const RUNJUMP_DX = [8, 10, 10, 10, 10, 10, 10, 10, 10, 10, 6];
-const STANDJUMP_DX = [0, 0, 2, 9, 9, 9, 9, 9, 9, 5, 2, 0];
-const JUMPUP_DY = [0, 0, -4, -8, -9, -8, -4, 0];
+// Values are per tick at 12 ticks a second.
+const START_DX = [3, 5, 8, 10];
+const RUN_DX = 11;
+const STOP_DX = [8, 4, 1];
+const RUNTURN_DX = [6, 4, 1, 0];
+const RUNJUMP_DX = [10, 13, 13, 13, 13, 13, 13, 12, 8];
+const STANDJUMP_DX = [0, 0, 3, 11, 11, 11, 11, 8, 3, 0];
+const STANDJUMP_LAND = 7; // tick at which a standing jump touches down
+const JUMPUP_DY = [0, -3, -7, -9, -7, -3, 0];
+const FALL_ACCEL = 3.75;
+const FALL_MAX = 27;
 
 const GROUND = new Set([
   'stand', 'turn', 'startrun', 'run', 'stop', 'runturn', 'bump', 'crouch',
@@ -50,7 +54,12 @@ export class Prince {
     this.noEngage = 0;
     this.hasSword = false;
     this.deathCause = null;
-    this.set('land');
+    this.jumpQueued = false;
+    // Drop in from the shaft above, as the Prince does at the start of the original.
+    this.y = floorY(this.row) - 70;
+    this.vy = 2.5;
+    this.fallFrom = this.row;
+    this.set('fall');
   }
 
   get alive() {
@@ -199,7 +208,7 @@ export class Prince {
 
   startFall(dx = 0, fromRow = this.row) {
     this.yOff = 0;
-    this.vy = 2;
+    this.vy = 2.5;
     this.dx = dx;
     this.fallFrom = fromRow;
     this.set('fall');
@@ -316,8 +325,9 @@ export class Prince {
       if (running) this.set(this.fwd(inp) ? 'run' : 'stop');
       return true;
     }
+    // Coming up short: the ledge ahead is caught only if UP or ACTION is held.
     const edge = this.dir > 0 ? (c + 1) * TILE_W : c * TILE_W;
-    if (L.standable(c + this.dir, this.row) && Math.abs(edge - this.x) <= 22) {
+    if ((inp.up || inp.action) && L.standable(c + this.dir, this.row) && Math.abs(edge - this.x) <= 20) {
       this.game.sfx('grab');
       this.hangFrom(edge, this.row, this.dir);
       return false;
@@ -331,10 +341,12 @@ export class Prince {
   s_stand(inp) {
     const L = this.level;
     this.yOff = 0;
+    this.jumpQueued = false;
     if (!this.supported()) return this.startFall(0);
     if (this.canEngage()) return this.engarde();
     if (inp.up && this.atOpenExit()) return this.set('exit');
-    if (inp.actionP) {
+    // ACTION on its own drinks or takes the sword; with a direction it's a careful step.
+    if (inp.actionP && !inp.left && !inp.right) {
       const tl = L.tile(this.col(), this.row);
       if (tl.t === T.POTION) return this.set('drink');
       if (tl.t === T.SWORD) return this.set('pickup');
@@ -361,17 +373,23 @@ export class Prince {
 
   s_startrun(inp) {
     if (!this.fwd(inp)) return this.set('stop');
-    if (inp.up) return this.set('runjump');
+    // A running jump needs a run-up: UP now is remembered until full speed.
+    if (inp.up) this.jumpQueued = true;
     const pc = this.col();
     if (this.moveH(this.dir * START_DX[this.t])) return this.set('bump');
-    this.runPhase = this.t / 8;
     if (!this.checkFooting(pc, true)) return;
-    if (this.t >= START_DX.length - 1) this.set('run');
+    if (this.t >= START_DX.length - 1) {
+      this.runPhase = 2 / 8; // continue the stride where the start-up frames left off
+      this.set('run');
+    }
   }
 
   s_run(inp) {
     if (this.canEngage()) return this.engarde();
-    if (inp.up) return this.set('runjump');
+    if (inp.up || this.jumpQueued) {
+      this.jumpQueued = false;
+      return this.set('runjump');
+    }
     if (this.back(inp)) return this.set('runturn');
     if (!this.fwd(inp) || inp.down) return this.set('stop');
     const pc = this.col();
@@ -415,15 +433,15 @@ export class Prince {
   s_standjump(inp) {
     const i = this.t;
     const hit = this.moveH(this.dir * STANDJUMP_DX[i]);
-    this.yOff = i >= 3 && i <= 9 ? -Math.sin((Math.PI * (i - 2)) / 8) * 10 : 0;
+    this.yOff = i >= 3 && i <= STANDJUMP_LAND ? -Math.sin((Math.PI * (i - 2)) / (STANDJUMP_LAND - 1)) * 10 : 0;
     if (hit && i >= 3) return this.startFall(0);
-    if (i === 9 && !this.landJump(inp, false)) return;
+    if (i === STANDJUMP_LAND && !this.landJump(inp, false)) return;
     if (i >= STANDJUMP_DX.length - 1) this.set('stand');
   }
 
   s_jumpup() {
     this.yOff = JUMPUP_DY[this.t] ?? 0;
-    if (this.t === 4) this.level.knock(this.col(), this.row - 1);
+    if (this.t === 3) this.level.knock(this.col(), this.row - 1);
     if (this.t >= JUMPUP_DY.length - 1) {
       this.yOff = 0;
       this.set('stand');
@@ -431,7 +449,7 @@ export class Prince {
   }
 
   s_jumpgrab() {
-    if (this.t >= 5) {
+    if (this.t >= 4) {
       this.game.sfx('grab');
       this.hangFrom(this.edgeX, this.ledgeRow, this.dir);
     }
@@ -451,7 +469,7 @@ export class Prince {
   }
 
   s_climb() {
-    if (this.t >= 9) {
+    if (this.t >= 8) {
       this.row = this.ledgeRow;
       this.y = floorY(this.ledgeRow);
       this.x = this.edgeX + this.dir * 8;
@@ -460,13 +478,13 @@ export class Prince {
   }
 
   s_climbdown() {
-    if (this.t >= 7) this.hangFrom(this.edgeX, this.ledgeRow, this.dir);
+    if (this.t >= 6) this.hangFrom(this.edgeX, this.ledgeRow, this.dir);
   }
 
   s_fall(inp) {
     const L = this.level;
     const y0 = this.y;
-    this.vy = Math.min(this.vy + 3, 22);
+    this.vy = Math.min(this.vy + FALL_ACCEL, FALL_MAX);
     const y1 = y0 + this.vy;
     if (this.dx && this.moveH(this.dx)) this.dx = 0;
     const c = this.col();
@@ -523,7 +541,7 @@ export class Prince {
   }
 
   s_landhard() {
-    if (this.t >= 7) this.set('standup');
+    if (this.t >= 6) this.set('standup');
   }
 
   s_crouch(inp) {
@@ -550,7 +568,7 @@ export class Prince {
   }
 
   s_drink() {
-    if (this.t === 5) {
+    if (this.t === 4) {
       const L = this.level;
       const tl = L.tile(this.col(), this.row);
       if (tl.t === T.POTION) {
@@ -564,11 +582,11 @@ export class Prince {
         this.game.potionFx(tl.kind);
       }
     }
-    if (this.t >= 10) this.set('stand');
+    if (this.t >= 8) this.set('stand');
   }
 
   s_pickup() {
-    if (this.t === 4) {
+    if (this.t === 3) {
       const L = this.level;
       if (L.tile(this.col(), this.row).t === T.SWORD) {
         this.hasSword = true;
@@ -576,7 +594,7 @@ export class Prince {
         this.game.sfx('sword');
       }
     }
-    if (this.t >= 8) this.set('stand');
+    if (this.t >= 7) this.set('stand');
   }
 
   s_exit() {
@@ -586,7 +604,7 @@ export class Prince {
     if (L.tile(c, this.row).half === 1) c--;
     const target = c * TILE_W + TILE_W;
     this.x += Math.sign(target - this.x) * Math.min(3, Math.abs(target - this.x));
-    if (this.t >= 18) this.game.win();
+    if (this.t >= 15) this.game.win();
   }
 
   s_dead() {}
@@ -610,13 +628,13 @@ export class Prince {
   }
 
   s_advance() {
-    this.moveH(this.dir * 4);
+    this.moveH(this.dir * 5);
     if (!this.supported()) return this.startFall(this.dir * 2);
     if (this.t >= 2) this.set('fight');
   }
 
   s_retreat() {
-    this.moveH(-this.dir * 4);
+    this.moveH(-this.dir * 5);
     if (!this.supported()) return this.startFall(-this.dir * 2);
     if (this.t >= 2) this.set('fight');
   }

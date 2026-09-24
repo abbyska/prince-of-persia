@@ -100,18 +100,18 @@ export class Guard {
     if (dist > 38) return this.set('advance');
     if (dist < 20) return this.set('retreat');
     if (this.cool <= 0) {
-      this.cool = 12 + Math.floor(Math.random() * 14);
+      this.cool = 10 + Math.floor(Math.random() * 12);
       this.set('strike');
     }
   }
 
   s_advance() {
-    this.move(this.dir * 3);
+    this.move(this.dir * 4);
     if (this.t >= 2) this.set('fight');
   }
 
   s_retreat() {
-    this.move(-this.dir * 3);
+    this.move(-this.dir * 4);
     if (this.t >= 2) this.set('fight');
   }
 
@@ -119,7 +119,7 @@ export class Guard {
     // A visible wind-up gives the player time to parry.
     if (this.t === 3) this.move(this.dir * 3);
     if (this.t === 4) this.game.resolveStrike(this, this.game.prince);
-    if (this.t >= 7 && this.state === 'strike') this.set('fight');
+    if (this.t >= 6 && this.state === 'strike') this.set('fight');
   }
 
   s_parry() {

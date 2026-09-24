@@ -16,10 +16,13 @@ desktops.
 - **Layers.** The Prince passes behind pillars, and when he hangs from a ledge,
   its front edge covers his hands. The front row of spikes is in front of him.
 - **One room per screen.** The camera cuts from room to room, as in the original.
-- **Movement comes from animation, not free physics.** The Prince builds up to
-  a run, skids to a stop, skids when he turns around, and can take careful
-  steps. He has standing and running jumps, jumps up to grab a ledge, hangs,
-  climbs, and lowers himself over edges.
+- **Frame-by-frame animation at 12 frames a second**, like the original: a
+  run cycle, a split-leg running leap, skids and turns, careful steps, a staged
+  climb (pull up, chin over the edge, knee up), flailing falls and a collapse
+  when killed. Movement comes from the animation, not free physics.
+- **Weight and precision.** A running jump needs a run-up and a take-off near
+  the edge. Ledges are only caught if you hold UP (JUMP) or ACTION, whether
+  you come up short on a jump or fall past one.
 - **Falls hurt:** one floor is safe, two floors cost a life point, three kill.
 - **Traps and objects:** spikes, loose floors, gates opened by pressure plates,
   healing and life potions, the sword, and an exit door.
@@ -36,6 +39,7 @@ desktops.
 | Jump up (grab a ledge) | ↑ | **JUMP** or pad up |
 | Jump ahead (standing or running) | ↑ + → | Slide the pad to up-right, or hold → and press **JUMP** |
 | Crouch / lower yourself over an edge | ↓ | Pad down |
+| Catch a ledge (short jump or falling) | hold ↑ or Shift | hold **JUMP** or **ACTION** |
 | Climb up / let go when hanging | ↑ / ↓ | **JUMP** / pad down |
 | Careful step (safe over spikes) | Shift + → | **ACTION** + pad |
 | Drink a potion / take the sword | Shift | **ACTION** |
@@ -46,6 +50,15 @@ On phones, landscape is best. The page asks for full screen and landscape where
 the browser allows it. On iPhone, use *Share → Add to Home Screen* to get a
 full-screen app.
 
+## Level 1
+
+The level follows the shape of the original's first level: the Prince drops
+into a cell and steps on a plate to open its gate; runs over loose floors and
+leaps a gap; climbs to a ledge with a potion, spikes and the sword; fights the
+guard; then drops through a hole by the exit to open it from the passage below,
+and climbs back up to leave. Falling through the floor lands in a lower hall
+with a life potion and a way back up.
+
 ## Development
 
 ```bash
@@ -54,6 +67,9 @@ npm run dev      # local dev server
 npm test         # headless tests, including a scripted run through the whole level
 npm run build    # production build in dist/
 ```
+
+With `npm run dev` running, `/tools/pose-sheet.html` shows every animation
+frame of the Prince, one row per move.
 
 ### Code layout
 
@@ -70,7 +86,7 @@ npm run build    # production build in dist/
 | `src/input.js` | Keyboard and multi-touch controls |
 | `src/audio.js` | PC-speaker style sound effects |
 
-The game logic runs at a fixed 15 ticks per second, so it plays at the same
+The game logic runs at a fixed 12 ticks per second, so it plays at the same
 speed on 60Hz and 120Hz screens.
 
 ## Deployment

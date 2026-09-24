@@ -17,7 +17,7 @@ export const T = {
 };
 
 const GATE_HOLD = 20 * TICK_HZ; // gates stay open this long after a plate press
-const LOOSE_DELAY = 7; // ticks a loose floor shakes before it drops
+const LOOSE_DELAY = 6; // ticks a loose floor shakes before it drops
 
 // Anything outside the map behaves like solid stone.
 const SOLID = Object.freeze({ t: T.WALL });
@@ -137,7 +137,7 @@ export class Level {
       const tl = this.tile(c + dc, r);
       if (tl.t === T.SPIKES) {
         if (tl.ext === 0 && tl.hold === 0) this.events.push('spikes');
-        tl.hold = 12;
+        tl.hold = 10;
       }
     }
   }
@@ -159,9 +159,9 @@ export class Level {
           case T.GATE:
             if (tl.timer > 0) {
               tl.timer--;
-              tl.open = Math.min(1, tl.open + 0.1);
+              tl.open = Math.min(1, tl.open + 0.12);
             } else if (tl.open > 0) {
-              tl.open = Math.max(0, tl.open - 0.012);
+              tl.open = Math.max(0, tl.open - 0.015);
               if (tl.open === 0) this.events.push('slam');
             }
             break;
@@ -187,10 +187,10 @@ export class Level {
       }
     }
 
-    if (this.exitOpening) this.exitOpen = Math.min(1, this.exitOpen + 0.015);
+    if (this.exitOpening) this.exitOpen = Math.min(1, this.exitOpen + 0.019);
 
     for (const f of this.falling) {
-      f.vy = Math.min(f.vy + 3, 20);
+      f.vy = Math.min(f.vy + 3.75, 25);
       f.y += f.vy;
       const next = f.row + 1;
       if (f.y >= floorY(next)) {

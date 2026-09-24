@@ -1,13 +1,13 @@
 import { floorY } from './constants.js';
 
-// Characters are drawn from a small skeleton, posed by joint angles and
-// interpolated between key poses, which gives the smooth "rotoscoped" motion of
-// the original without copying its sprites.
+// Characters are drawn from a small skeleton. Every move is a sequence of
+// hand-made key poses shown one per game tick (12 a second), like the
+// original's frame-by-frame animation, rather than a smooth blend.
 //
 // Angles are in radians. Legs and arms: 0 = straight down, positive = swung
 // forward (towards the facing direction), PI = straight up. The second number
 // is the bend at the knee (backwards) or elbow (forwards). `sword` is the blade
-// angle: 0 = level, negative = raised.
+// angle: 0 = level, negative = raised. `lift` raises the whole body.
 
 const THIGH = 12;
 const SHIN = 12;
@@ -17,35 +17,85 @@ const FOREARM = 7;
 
 export const KEYS = ['hip', 'neck', 'sh', 'head', 'k1', 'f1', 'k2', 'f2', 'e1', 'w1', 'e2', 'w2'];
 
+const pose = (lean, legs, arms, sword) => ({ lean, legs, arms, sword });
+
 export const POSES = {
-  stand: { lean: 0.02, legs: [[0.12, 0.08], [-0.12, 0.05]], arms: [[0.1, 0.15], [-0.08, 0.1]] },
-  turn: { lean: 0, legs: [[0.02, 0.05], [-0.02, 0.05]], arms: [[0.35, 1.3], [0.3, 1.3]] },
-  bump: { lean: -0.25, legs: [[0.25, 0.1], [-0.15, 0.3]], arms: [[-0.4, 0.6], [0.5, 0.4]] },
-  crouch: { lean: 0.6, legs: [[1.45, 2.5], [1.05, 2.35]], arms: [[0.8, 0.5], [0.5, 0.6]] },
-  skid: { lean: -0.3, legs: [[0.75, 0.1], [0.15, 1.0]], arms: [[-0.6, 0.5], [0.9, 0.7]] },
-  reach: { lean: 0.35, legs: [[1.1, 0.5], [-0.75, 1.0]], arms: [[2.1, 0.3], [-0.9, 0.6]] },
-  tuck: { lean: 0.3, legs: [[1.3, 1.9], [0.7, 1.8]], arms: [[1.5, 0.8], [1.0, 0.8]] },
-  armsUp: { lean: 0, legs: [[0.3, 0.6], [0, 0.4]], arms: [[2.85, 0], [2.75, 0.1]] },
-  fall: { lean: -0.05, legs: [[0.35, 0.7], [-0.25, 0.3]], arms: [[2.7, 0.3], [2.45, 0.4]] },
-  hang: { lean: 0.05, legs: [[0.12, 0.15], [-0.1, 0.35]], arms: [[3.1, 0], [3.0, 0]] },
-  drink: { lean: -0.1, legs: [[0.12, 0.08], [-0.12, 0.05]], arms: [[1.1, 2.7], [-0.1, 0.2]] },
-  fight: { lean: 0.12, legs: [[0.45, 0.35], [-0.4, 0.25]], arms: [[1.2, 0.35], [-2.3, 0.7]], sword: -0.35 },
-  strike: { lean: 0.3, legs: [[0.85, 0.3], [-0.7, 0.1]], arms: [[1.57, 0], [-1.9, 0.5]], sword: 0 },
-  windup: { lean: -0.05, legs: [[0.4, 0.35], [-0.45, 0.25]], arms: [[2.4, 0.9], [-2.3, 0.7]], sword: -1.9 },
-  parry: { lean: 0.02, legs: [[0.35, 0.3], [-0.4, 0.25]], arms: [[1.9, 1.0], [-2.3, 0.7]], sword: -1.45 },
-  hurt: { lean: -0.35, legs: [[0.3, 0.4], [-0.2, 0.2]], arms: [[0.9, 0.5], [-0.6, 0.4]], sword: 0.5 },
-  guardIdle: { lean: 0.02, legs: [[0.12, 0.08], [-0.12, 0.05]], arms: [[0.4, 0.4], [-0.08, 0.1]], sword: 1.1 },
+  stand: pose(0.03, [[0.1, 0.06], [-0.1, 0.05]], [[0.08, 0.2], [-0.06, 0.15]]),
+  turnA: pose(0, [[0.05, 0.1], [-0.05, 0.1]], [[0.5, 1.5], [0.45, 1.6]]),
+  turnB: pose(0.05, [[0.2, 0.2], [-0.1, 0.1]], [[0.2, 0.8], [-0.2, 0.6]]),
+  bump: pose(-0.3, [[0.3, 0.1], [-0.1, 0.4]], [[-0.6, 0.6], [0.6, 0.5]]),
+  startA: pose(0.1, [[0.35, 0.6], [-0.08, 0.08]], [[-0.2, 0.5], [0.25, 0.6]]),
+  startB: pose(0.18, [[0.65, 0.25], [-0.3, 0.4]], [[-0.4, 0.8], [0.5, 1.0]]),
+  skidA: pose(0, [[0.55, 0.2], [-0.2, 0.7]], [[-0.3, 0.6], [0.4, 0.9]]),
+  skidB: pose(-0.25, [[0.75, 0.1], [0.15, 1.1]], [[-0.7, 0.4], [0.9, 0.6]]),
+  skidC: pose(-0.1, [[0.35, 0.15], [0, 0.5]], [[-0.2, 0.3], [0.3, 0.4]]),
+  crouchPrep: pose(0.25, [[0.6, 1.1], [0.4, 1.0]], [[-0.5, 0.4], [-0.3, 0.5]]),
+  crouchDeep: pose(0.5, [[1.1, 2.0], [0.9, 1.9]], [[-0.9, 0.3], [-0.7, 0.4]]),
+  crouch: pose(0.6, [[1.45, 2.5], [1.05, 2.35]], [[0.8, 0.5], [0.5, 0.6]]),
+  landHard: pose(0.9, [[1.4, 2.6], [1.1, 2.5]], [[1.0, 0.1], [0.8, 0.2]]),
+  pushOff: pose(0.35, [[0.25, 0.15], [-0.45, 0.2]], [[2.2, 0.3], [1.8, 0.4]]),
+  airStretch: pose(0.3, [[0.9, 0.4], [-0.7, 0.5]], [[2.3, 0.2], [1.6, 0.5]]),
+  airTuck: pose(0.35, [[1.3, 1.4], [0.8, 1.6]], [[1.8, 0.5], [1.3, 0.7]]),
+  reachDown: pose(0.25, [[0.9, 0.5], [0.3, 0.9]], [[1.2, 0.6], [0.8, 0.8]]),
+  landCrouch: pose(0.6, [[1.3, 2.3], [1.0, 2.2]], [[0.9, 0.5], [0.6, 0.6]]),
+  takeoff: pose(0.35, [[0.35, 0.2], [-0.75, 0.35]], [[1.4, 0.6], [-0.8, 0.5]]),
+  leapA: pose(0.3, [[1.15, 0.25], [-0.95, 0.5]], [[2.1, 0.3], [-1.2, 0.4]]),
+  leap: pose(0.25, [[1.3, 0.2], [-1.1, 0.45]], [[2.3, 0.2], [-1.3, 0.4]]),
+  leapB: pose(0.25, [[1.2, 0.5], [-0.8, 0.9]], [[2.0, 0.4], [-1.0, 0.6]]),
+  descendA: pose(0.25, [[0.95, 0.4], [-0.5, 1.1]], [[1.6, 0.6], [-0.6, 0.8]]),
+  descendB: pose(0.22, [[0.8, 0.3], [-0.3, 1.0]], [[1.2, 0.7], [-0.4, 0.8]]),
+  landReach: pose(0.2, [[0.7, 0.2], [-0.4, 0.7]], [[0.8, 0.8], [-0.3, 0.8]]),
+  armsUp: pose(0, [[0.1, 0.15], [-0.1, 0.25]], [[3.0, 0], [2.9, 0.05]]),
+  armsUpBent: pose(0, [[0.3, 0.6], [0.1, 0.5]], [[2.9, 0.1], [2.8, 0.15]]),
+  hang: pose(0.05, [[0.12, 0.15], [-0.1, 0.35]], [[3.1, 0], [3.0, 0]]),
+  pull: pose(0.15, [[0.25, 0.4], [-0.05, 0.6]], [[2.4, 1.1], [2.3, 1.2]]),
+  chin: pose(0.45, [[0.6, 1.2], [0.1, 0.7]], [[1.5, 1.9], [1.4, 2.0]]),
+  kneeUp: pose(0.9, [[1.7, 2.7], [-0.1, 0.9]], [[1.1, 0.4], [0.9, 0.6]]),
+  fallA: pose(-0.05, [[0.35, 0.7], [-0.25, 0.3]], [[2.7, 0.3], [2.2, 0.6]]),
+  fallB: pose(0, [[0.1, 0.4], [0.25, 0.9]], [[2.3, 0.5], [2.8, 0.2]]),
+  stepLift: pose(0.05, [[0.45, 0.9], [-0.05, 0.08]], [[0.2, 0.4], [-0.15, 0.3]]),
+  stepReach: pose(0.05, [[0.6, 0.35], [-0.15, 0.1]], [[0.25, 0.4], [-0.2, 0.3]]),
+  stepPlace: pose(0.08, [[0.4, 0.1], [-0.35, 0.2]], [[0.2, 0.3], [-0.2, 0.3]]),
+  stepShift: pose(0.1, [[0.15, 0.05], [-0.45, 0.5]], [[0.1, 0.3], [-0.1, 0.3]]),
+  stepBring: pose(0.05, [[0.1, 0.05], [0.1, 0.9]], [[0.05, 0.2], [0, 0.2]]),
+  drinkLift: pose(0, [[0.1, 0.06], [-0.1, 0.05]], [[0.8, 1.6], [-0.1, 0.2]]),
+  drink: pose(-0.1, [[0.1, 0.06], [-0.1, 0.05]], [[1.1, 2.7], [-0.1, 0.2]]),
+  drinkTilt: pose(-0.22, [[0.12, 0.06], [-0.12, 0.05]], [[1.3, 2.6], [-0.2, 0.2]]),
+  reachFloor: pose(0.8, [[1.4, 2.5], [1.0, 2.4]], [[1.2, 0.1], [0.6, 0.5]]),
+  kneel: pose(0.3, [[1.3, 2.5], [1.0, 2.5]], [[0.4, 0.3], [0.2, 0.3]]),
+  slump: pose(1.0, [[1.3, 2.5], [1.0, 2.5]], [[0.9, 0.2], [0.6, 0.3]]),
+  fight: pose(0.12, [[0.45, 0.35], [-0.4, 0.25]], [[1.2, 0.35], [-2.3, 0.7]], -0.35),
+  advanceA: pose(0.14, [[0.6, 0.3], [-0.35, 0.25]], [[1.2, 0.35], [-2.3, 0.7]], -0.35),
+  advanceB: pose(0.12, [[0.4, 0.35], [-0.2, 0.35]], [[1.2, 0.35], [-2.3, 0.7]], -0.35),
+  retreatA: pose(0.08, [[0.4, 0.35], [-0.6, 0.2]], [[1.2, 0.35], [-2.3, 0.7]], -0.35),
+  retreatB: pose(0.1, [[0.25, 0.3], [-0.45, 0.25]], [[1.2, 0.35], [-2.3, 0.7]], -0.35),
+  windup: pose(-0.05, [[0.4, 0.35], [-0.45, 0.25]], [[2.4, 0.9], [-2.3, 0.7]], -1.9),
+  lunge: pose(0.2, [[0.7, 0.3], [-0.6, 0.15]], [[1.9, 0.3], [-2.1, 0.6]], -0.8),
+  strike: pose(0.3, [[0.85, 0.3], [-0.7, 0.1]], [[1.57, 0], [-1.9, 0.5]], 0),
+  parry: pose(0.02, [[0.35, 0.3], [-0.4, 0.25]], [[1.9, 1.0], [-2.3, 0.7]], -1.45),
+  hurt: pose(-0.35, [[0.3, 0.4], [-0.2, 0.2]], [[0.9, 0.5], [-0.6, 0.4]], 0.5),
+  guardIdle: pose(0.03, [[0.1, 0.06], [-0.1, 0.05]], [[0.4, 0.4], [-0.06, 0.15]], 1.1),
 };
 
-export function runPose(phase, amp = 1, lean = 0.22) {
-  const a = phase * Math.PI * 2;
-  const leg = (off) => {
-    const s = Math.sin(a + off);
-    const c = Math.cos(a + off);
-    return [0.8 * s * amp, (c > 0 ? 0.25 + 1.4 * c : 0.25) * amp + 0.05];
+// Run cycle: four key poses for each stride (contact, down, passing, flight),
+// then the same with the legs and arms swapped.
+const RUN_HALF = [
+  { lean: 0.22, a: [0.7, 0.15], b: [-0.55, 0.55], an: [-0.65, 0.9], af: [0.75, 1.3] },
+  { lean: 0.28, a: [0.3, 0.55], b: [-0.5, 1.7], an: [-0.35, 1.0], af: [0.45, 1.2] },
+  { lean: 0.25, a: [-0.05, 0.25], b: [0.45, 1.9], an: [0.05, 1.0], af: [0.05, 1.0] },
+  { lean: 0.22, a: [-0.5, 0.4], b: [1.0, 1.3], an: [0.7, 1.3], af: [-0.6, 0.9], lift: 2 },
+];
+
+export function runFrame(i) {
+  const k = ((i % 8) + 8) % 8;
+  const F = RUN_HALF[k % 4];
+  const first = k < 4;
+  return {
+    lean: F.lean,
+    legs: first ? [F.a, F.b] : [F.b, F.a],
+    arms: first ? [F.an, F.af] : [F.af, F.an],
+    lift: F.lift || 0,
   };
-  const s = Math.sin(a) * amp;
-  return { lean: lean * amp, legs: [leg(0), leg(Math.PI)], arms: [[-0.8 * s, 0.9], [0.8 * s, 0.9]] };
 }
 
 function rig(p) {
@@ -66,20 +116,20 @@ function rig(p) {
   return { hip, neck, sh, head, k1, f1, k2, f2, e1, w1, e2, w2 };
 }
 
-// Places a pose in the world. By default the lowest foot rests on (x, y);
-// with anchor 'hands' the highest hand is put at (x, y) instead.
-export function place(pose, x, y, dir, anchor = 'feet', yOff = 0) {
-  const r = rig(pose);
+// Places a pose in the world. Anchors: 'feet' (the lowest foot rests on x,y),
+// 'hands' (the highest hand is at x,y) or 'hip' (the hip is at x,y).
+export function place(p, x, y, dir, anchor = 'feet', yOff = 0) {
+  const r = rig(p);
   let ox = 0;
-  let oy;
+  let oy = 0;
   if (anchor === 'hands') {
     const w = r.w1[1] < r.w2[1] ? r.w1 : r.w2;
     ox = -w[0];
     oy = -w[1];
-  } else {
-    oy = -Math.max(r.f1[1], r.f2[1]);
+  } else if (anchor === 'feet') {
+    oy = -Math.max(r.f1[1], r.f2[1]) - (p.lift || 0);
   }
-  const J = { dir, sword: pose.sword };
+  const J = { dir, sword: p.sword };
   for (const k of KEYS) J[k] = [x + (r[k][0] + ox) * dir, y + r[k][1] + oy + yOff];
   return J;
 }
@@ -94,7 +144,7 @@ export function lerpJ(a, b, k) {
   return J;
 }
 
-function lerpPose(a, b, k) {
+function mixPose(a, b, k) {
   const mix = (x, y) => x + (y - x) * k;
   return {
     lean: mix(a.lean, b.lean),
@@ -112,114 +162,152 @@ function lying(x, y, dir) {
   return J;
 }
 
+// Picks frame t from a list, holding the last one.
+const at = (frames, t) => frames[Math.min(Math.max(0, t), frames.length - 1)];
+
+const STANDJUMP = ['crouchPrep', 'crouchDeep', 'pushOff', 'airStretch', 'airTuck', 'airTuck', 'reachDown', 'landCrouch', 'crouch'];
+const RUNJUMP = ['takeoff', 'leapA', 'leap', 'leap', 'leapB', 'descendA', 'descendB', 'landReach'];
+const JUMPUP = ['crouchPrep', 'crouchDeep', 'armsUp', 'armsUp', 'armsUp', 'armsUpBent', 'landCrouch'];
+const STEP = ['stepLift', 'stepReach', 'stepPlace', 'stepShift', 'stepBring', 'stand'];
+const DRINK = ['stand', 'drinkLift', 'drink', 'drinkTilt', 'drinkTilt', 'drink', 'drinkLift', 'stand'];
+const PICKUP = ['crouchPrep', 'reachFloor', 'reachFloor', 'reachFloor', 'crouch', 'crouchPrep', 'stand'];
+const SKID = ['skidA', 'skidB', 'skidC'];
+
 const HANG_HAND = (p) => [p.edgeX - p.dir * 1, floorY(p.ledgeRow) + 1];
 
+// Key configurations of a climb onto the ledge the Prince is holding.
+function climbStages(p) {
+  const [hx, hy] = HANG_HAND(p);
+  const d = p.dir;
+  const top = floorY(p.ledgeRow);
+  return [
+    place(POSES.hang, hx, hy, d, 'hands'),
+    place(POSES.pull, hx, hy, d, 'hands'),
+    place(POSES.chin, hx, hy, d, 'hands'),
+    place(POSES.kneeUp, p.edgeX + d * 1, top - 9, d, 'hip'),
+    place(POSES.crouch, p.edgeX + d * 8, top, d),
+  ];
+}
+
+// Walks a list of key configurations: frame t shows stage t/2, with the odd
+// frames halfway between stages.
+function stageFrame(stages, t) {
+  const s = Math.min(t / 2, stages.length - 1);
+  const i = Math.floor(s);
+  return s === i ? stages[i] : lerpJ(stages[i], stages[i + 1], 0.5);
+}
+
+function death(x, y, dir, t, cause) {
+  if (cause === 'spikes' || cause === 'fall' || t >= 2) return lying(x, y, dir);
+  return place(t === 0 ? POSES.kneel : POSES.slump, x, y, dir);
+}
+
 export function princeJoints(p) {
-  const { x, y, dir } = p;
-  const P = (pose, yOff = p.yOff) => place(pose, x, y, dir, 'feet', yOff);
-  const t = p.t;
+  const { x, y, dir, t } = p;
+  const P = (q, yOff = p.yOff) => place(typeof q === 'string' ? POSES[q] : q, x, y, dir, 'feet', yOff);
   switch (p.state) {
     case 'stand':
-      return P(POSES.stand);
+      return P('stand');
     case 'turn':
-      return P(t === 0 ? POSES.turn : lerpPose(POSES.turn, POSES.stand, 0.5));
+      return P(t === 0 ? 'turnA' : t === 1 ? 'turnB' : 'stand');
     case 'bump':
-      return P(POSES.bump);
+      return P('bump');
     case 'startrun':
-      return P(runPose(p.runPhase, (t + 1) / 4));
+      return P(t === 0 ? POSES.startA : t === 1 ? POSES.startB : runFrame(t - 1));
     case 'run':
-      return P(runPose(p.runPhase));
+      return P(runFrame(Math.floor(p.runPhase * 8)));
     case 'stop':
-      return P(POSES.skid);
+      return P(at(SKID, t));
     case 'runturn':
-      return P(t < 3 ? POSES.skid : POSES.turn);
-    case 'runjump': {
-      const n = 11;
-      if (t < 1) return P(runPose(p.runPhase));
-      if (t >= n - 2) return P(lerpPose(POSES.reach, POSES.tuck, (t - (n - 2)) / 2));
-      return P(lerpPose(POSES.tuck, POSES.reach, Math.min(1, t / 3)));
-    }
+      return P(t < 3 ? SKID[t] : t === 3 ? 'turnA' : 'turnB');
+    case 'runjump':
+      return P(t >= RUNJUMP.length ? runFrame(0) : RUNJUMP[t]);
     case 'standjump':
-      if (t < 3) return P(lerpPose(POSES.stand, POSES.crouch, t / 2));
-      if (t <= 9) return P(lerpPose(POSES.tuck, POSES.reach, Math.min(1, (t - 3) / 3)));
-      return P(POSES.crouch);
+      return P(t >= STANDJUMP.length ? mixPose(POSES.crouch, POSES.stand, 0.5) : STANDJUMP[t]);
     case 'jumpup':
-      if (t < 2 || t > 6) return P(POSES.crouch);
-      return P(POSES.armsUp);
+      return P(at(JUMPUP, t));
     case 'jumpgrab': {
       const [hx, hy] = HANG_HAND(p);
-      return lerpJ(P(POSES.crouch, 0), place(POSES.hang, hx, hy, dir, 'hands'), t / 5);
+      if (t === 0) return P('crouchDeep', 0);
+      if (t === 1) return P('armsUp', -4);
+      return lerpJ(P('armsUp', -6), place(POSES.hang, hx, hy, dir, 'hands'), (t - 1) / 3);
     }
     case 'hang': {
       const [hx, hy] = HANG_HAND(p);
-      return place(POSES.hang, hx, hy, dir, 'hands');
+      const sway = Math.sin(t * 0.7) * 0.08;
+      const h = POSES.hang;
+      return place({ ...h, legs: [[h.legs[0][0] + sway, h.legs[0][1]], [h.legs[1][0] - sway, h.legs[1][1]]] }, hx, hy, dir, 'hands');
     }
-    case 'climb': {
-      const [hx, hy] = HANG_HAND(p);
-      const top = place(POSES.crouch, p.edgeX + dir * 8, floorY(p.ledgeRow), dir);
-      return lerpJ(place(POSES.hang, hx, hy, dir, 'hands'), top, t / 9);
-    }
-    case 'climbdown': {
-      const [hx, hy] = HANG_HAND(p);
-      return lerpJ(P(POSES.crouch, 0), place(POSES.hang, hx, hy, dir, 'hands'), t / 7);
-    }
+    case 'climb':
+      return stageFrame(climbStages(p), t);
+    case 'climbdown':
+      return stageFrame(climbStages(p).reverse(), t * 1.4);
     case 'fall':
-      return P(POSES.fall, 0);
+      return P(t % 4 < 2 ? 'fallA' : 'fallB', 0);
     case 'land':
+      return P(t === 0 ? 'crouchDeep' : 'crouch', 0);
     case 'landhard':
+      return P(t < 4 ? 'landHard' : 'crouch', 0);
     case 'crouch':
-      return P(POSES.crouch, 0);
+      return P('crouch', 0);
     case 'crouchhop':
-      return P(POSES.crouch, t === 1 ? -2 : 0);
+      return P('crouch', t === 1 ? -2 : 0);
     case 'standup':
-      return P(lerpPose(POSES.crouch, POSES.stand, (t + 1) / 3), 0);
+      return P(mixPose(POSES.crouch, POSES.stand, Math.min(1, (t + 1) / 3)), 0);
     case 'step':
-      return P(runPose(Math.min(t, 5) / 10, 0.45, 0.05));
+      return P(at(STEP, t));
     case 'drink':
-      return P(t < 3 ? lerpPose(POSES.stand, POSES.drink, t / 2) : t > 8 ? POSES.stand : POSES.drink);
+      return P(at(DRINK, t));
     case 'pickup':
-      return P(t < 6 ? POSES.crouch : POSES.stand);
+      return P(at(PICKUP, t));
     case 'exit':
-      return P(runPose(t / 8, 0.5, 0.05));
+      return P(STEP[t % 5]);
     case 'engarde':
-      return P(lerpPose(POSES.stand, POSES.fight, t / 2));
+      return P(t === 0 ? POSES.stand : t === 1 ? mixPose(POSES.stand, POSES.fight, 0.5) : POSES.fight);
     case 'fight':
-      return P(POSES.fight);
+      return P('fight');
     case 'advance':
+      return P(t === 0 ? 'advanceA' : t === 1 ? 'advanceB' : 'fight');
     case 'retreat':
-      return P(lerpPose(POSES.fight, POSES.stand, t === 1 ? 0.3 : 0));
+      return P(t === 0 ? 'retreatA' : t === 1 ? 'retreatB' : 'fight');
     case 'strike':
-      return P(t === 0 ? POSES.windup : t <= 3 ? POSES.strike : POSES.fight);
+      return P(['windup', 'lunge', 'strike', 'strike', mixPose(POSES.strike, POSES.fight, 0.5), 'fight'][Math.min(t, 5)]);
     case 'parry':
-      return P(POSES.parry);
+      return P('parry');
     case 'blocked':
+      return P(mixPose(POSES.fight, POSES.hurt, 0.6));
     case 'hurt':
-      return P(POSES.hurt);
+      return P('hurt');
     case 'sheathe':
-      return P(lerpPose(POSES.fight, POSES.stand, t / 2));
+      return P(t === 0 ? POSES.fight : t === 1 ? mixPose(POSES.fight, POSES.stand, 0.5) : POSES.stand);
     case 'dead':
-      return lying(x, y, dir);
+      return death(x, y, dir, t, p.deathCause);
   }
-  return P(POSES.stand);
+  return P('stand');
 }
 
 export function guardJoints(g) {
-  const P = (pose) => place(pose, g.x, g.y, g.dir);
+  const P = (q) => place(typeof q === 'string' ? POSES[q] : q, g.x, g.y, g.dir);
+  const t = g.t;
   switch (g.state) {
     case 'guard':
-      return P(POSES.guardIdle);
+      return P('guardIdle');
     case 'advance':
+      return P(t === 0 ? 'advanceA' : t === 1 ? 'advanceB' : 'fight');
     case 'retreat':
-      return P(lerpPose(POSES.fight, POSES.stand, g.t === 1 ? 0.3 : 0));
+      return P(t === 0 ? 'retreatA' : t === 1 ? 'retreatB' : 'fight');
     case 'strike':
-      return P(g.t < 3 ? POSES.windup : g.t <= 5 ? POSES.strike : POSES.fight);
+      return P(
+        t < 3 ? mixPose(POSES.fight, POSES.windup, (t + 1) / 3) : ['lunge', 'strike', 'strike', 'fight'][Math.min(t - 3, 3)],
+      );
     case 'parry':
-      return P(POSES.parry);
+      return P('parry');
     case 'hurt':
+      return P('hurt');
     case 'blocked':
-      return P(POSES.hurt);
+      return P(mixPose(POSES.fight, POSES.hurt, 0.6));
     case 'dead':
-      return lying(g.x, g.y, g.dir);
+      return death(g.x, g.y, g.dir, t, 'sword');
   }
-  return P(POSES.fight);
+  return P('fight');
 }

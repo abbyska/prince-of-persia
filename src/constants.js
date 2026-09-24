@@ -13,9 +13,10 @@ export const ROOM_H = TILE_H * ROOM_ROWS; // 189
 // Feet rest this far below the top of their tile row.
 export const FLOOR_OFF = 55;
 
-// The original ran its game logic at roughly 12-15 frames per second. Logic is
-// fixed-step so a 120Hz phone plays at the same speed as a 60Hz monitor.
-export const TICK_HZ = 15;
+// The original animated at about 12 frames per second, one pose per frame,
+// which gives its deliberate rhythm. Logic is fixed-step, so a 120Hz phone
+// plays at the same speed as a 60Hz monitor.
+export const TICK_HZ = 12;
 export const TICK_MS = 1000 / TICK_HZ;
 
 export const GAME_MINUTES = 60;
