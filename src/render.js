@@ -643,7 +643,7 @@ export class Renderer {
 
   // Portcullis: a pale iron lattice standing in the depth plane (like a side
   // face), so it runs back into the room as in the original. It slides up
-  // into the ceiling as it opens.
+  // into the ceiling as it opens, leaving the way clear.
   gates(ctx, level, rx, ry) {
     this.eachTile(rx, ry, (c, r, x, y) => {
       const tl = level.tile(c, r);
@@ -664,9 +664,6 @@ export class Renderer {
         ctx.lineWidth = w;
         ctx.stroke();
       };
-
-      // Groove post at the front, floor to ceiling.
-      bar(xf - 1.2, y, xf - 1.2, floorFront, 1.4);
 
       if (bottom > y + 1) {
         ctx.save();
