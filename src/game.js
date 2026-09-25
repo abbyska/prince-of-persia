@@ -1,4 +1,4 @@
-import { GAME_MINUTES, START_HP, TICK_HZ, ROOM_W, ROOM_H } from './constants.js';
+import { GAME_MINUTES, START_HP, TICK_HZ, ROOM_W, ROOM_H, floorY } from './constants.js';
 import { Level } from './level.js';
 import { Prince } from './prince.js';
 import { Guard } from './guard.js';
@@ -69,12 +69,16 @@ export class Game {
     this.sfx('win');
   }
 
-  // Which room the camera shows: the one the Prince's feet are in.
+  // Which room the camera shows: the one the Prince's body is in. While
+  // hanging below a ledge that is the room under it (his arms reach up out of
+  // view, as in the original); the view moves up once he is over the edge.
   room() {
     const p = this.prince;
+    const overEdge = (p.state === 'climb' && p.t >= 4) || (p.state === 'climbdown' && p.t < 3);
+    const y = overEdge ? floorY(p.ledgeRow) : p.y;
     return {
       rx: Math.max(0, Math.floor(p.x / ROOM_W)),
-      ry: Math.max(0, Math.floor((p.y - 1) / ROOM_H)),
+      ry: Math.max(0, Math.floor((y - 1) / ROOM_H)),
     };
   }
 

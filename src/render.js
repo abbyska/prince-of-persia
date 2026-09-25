@@ -157,12 +157,14 @@ export class Renderer {
       if (level.isWall(c, r)) this.wallFace(ctx, x, y, c, r);
       else this.backWall(ctx, x, y, c, r);
     });
+    // Stone blocks' caps and side faces first; floors drawn after cover the
+    // parts of them that are behind a floor or ledge.
+    this.eachTile(rx, ry, (c, r, x, y) => {
+      if (level.isWall(c, r)) this.wallDepth(ctx, x, y, c, r, level);
+    });
     this.eachTile(rx, ry, (c, r, x, y) => {
       const tl = level.tile(c, r);
       switch (tl.t) {
-        case T.WALL:
-          this.wallDepth(ctx, x, y, c, r, level);
-          break;
         case T.TORCH:
           this.sconce(ctx, x, y);
           this.floor(ctx, x, y, c, r, level);
@@ -257,16 +259,18 @@ export class Renderer {
   }
 
   // Top surface of a slab or stone mass: a flat parallelogram receding
-  // towards the back, with a light front edge.
-  topSurface(ctx, x, top, front) {
-    poly(ctx, [x, front], [x + TILE_W, front], [x + TILE_W + SKEW, top], [x + SKEW, top]);
+  // towards the back, with a light front edge. With `stopRight` it ends at the
+  // tile's right edge, because a stone block stands in front there.
+  topSurface(ctx, x, top, front, stopRight = false) {
+    const xr = x + TILE_W + (stopRight ? 0 : SKEW);
+    poly(ctx, [x, front], [x + TILE_W, front], [xr, top], [x + SKEW, top]);
     ctx.fillStyle = C.top;
     ctx.fill();
     ctx.strokeStyle = C.mortar;
     ctx.lineWidth = 0.6;
     ctx.beginPath();
     ctx.moveTo(x + SKEW, top);
-    ctx.lineTo(x + TILE_W + SKEW, top);
+    ctx.lineTo(xr, top);
     ctx.stroke();
     ctx.fillStyle = C.topEdge;
     ctx.fillRect(x, front - 1.2, TILE_W, 1.2);
@@ -330,14 +334,25 @@ export class Renderer {
 
   // Stone block: top surface where open above, side face where open to the right.
   wallDepth(ctx, x, y, c, r, level) {
-    if (!level.hasFloor(c, r - 1)) this.topSurface(ctx, x, y - DEPTH, y);
-    if (!level.isWall(c + 1, r)) this.sideFace(ctx, x + TILE_W, y - DEPTH, y, y + TILE_H, r);
+    // Stone above-right stands in front of anything reaching back into it.
+    const blockedAbove = level.isWall(c + 1, r - 1);
+    if (!level.hasFloor(c, r - 1)) this.topSurface(ctx, x, y - DEPTH, y, blockedAbove);
+    if (!level.isWall(c + 1, r)) {
+      ctx.save();
+      if (blockedAbove) {
+        ctx.beginPath();
+        ctx.rect(x + TILE_W, y, SKEW + 1, TILE_H);
+        ctx.clip();
+      }
+      this.sideFace(ctx, x + TILE_W, y - DEPTH, y, y + TILE_H, r);
+      ctx.restore();
+    }
   }
 
   floor(ctx, x, y, c, r, level, dy = 0) {
     const top = y + SLAB_TOP + dy;
     const front = y + FRONT + dy;
-    this.topSurface(ctx, x, top, front);
+    this.topSurface(ctx, x, top, front, level.isWall(c + 1, r));
     ctx.fillStyle = C.stoneSpeck;
     for (let k = 0; k < 3; k++) {
       const h = hash(c, r, k + 40);
@@ -354,7 +369,9 @@ export class Renderer {
     ctx.fillStyle = C.mortar;
     ctx.fillRect(x, front, TILE_W, bottom - front);
     this.stoneFace(ctx, x + 0.6, front + 0.6, TILE_W - 1.2, bottom - front - 1.2, hash(c, r, 21));
-    if (level.tile(c + 1, r).t === T.EMPTY) this.sideFace(ctx, x + TILE_W, y + SLAB_TOP, front, bottom, c);
+    if (level.tile(c + 1, r).t === T.EMPTY && !level.isWall(c + 1, r + 1)) {
+      this.sideFace(ctx, x + TILE_W, y + SLAB_TOP, front, bottom, c);
+    }
   }
 
   // A tapered iron cup on a short bracket.
@@ -526,9 +543,12 @@ export class Renderer {
     const h = (ext / 5) * 13;
     const base = y + (front ? 55 : 50);
     for (const sx of front ? [5, 12, 19, 26] : [9, 16, 23, 30]) {
-      ctx.fillStyle = 'rgba(10,12,30,0.8)';
-      ctx.fillRect(x + sx - 1.6, base - 0.4, 3.2, 0.8);
-      if (!h) continue;
+      if (!h) {
+        poly(ctx, [x + sx - 0.9, base], [x + sx + 0.9, base], [x + sx, base - 1.6]);
+        ctx.fillStyle = '#b8bed8';
+        ctx.fill();
+        continue;
+      }
       poly(ctx, [x + sx - 1.1, base], [x + sx + 1.1, base], [x + sx, base - h]);
       ctx.fillStyle = hgrad(ctx, x + sx - 1.1, x + sx + 1.1, ['#ffffff', '#b8bed8', '#555c80']);
       ctx.fill();
