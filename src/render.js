@@ -641,23 +641,50 @@ export class Renderer {
     ctx.fillRect(x + 12, y + 9 + h - 0.8, 40, 0.8);
   }
 
+  // Portcullis: a pale iron lattice standing in the depth plane (like a side
+  // face), so it runs back into the room as in the original. It slides up
+  // into the ceiling as it opens, leaving the way clear.
   gates(ctx, level, rx, ry) {
     this.eachTile(rx, ry, (c, r, x, y) => {
       const tl = level.tile(c, r);
       if (tl.t !== T.GATE) return;
-      ctx.fillStyle = vgrad(ctx, y, y + 3.5, ['#4a4a5c', '#15151f']);
-      ctx.fillRect(x + 19.5, y, 13, 3.5);
-      const h = (1 - tl.open) * 50;
-      if (h <= 0.5) return;
-      for (const bx of [21, 24.5, 28, 31.5]) {
-        ctx.fillStyle = hgrad(ctx, bx - 0.8, bx + 0.8, ['#9ca0b8', '#3a3c4c', '#16161e']);
-        ctx.fillRect(x + bx - 0.8, y + 3.5, 1.6, h);
-        poly(ctx, [x + bx - 0.9, y + 3.5 + h], [x + bx + 0.9, y + 3.5 + h], [x + bx, y + 5.5 + h]);
-        ctx.fill();
-      }
-      for (let yy = y + 9; yy < y + 3.5 + h; yy += 8) {
-        ctx.fillStyle = vgrad(ctx, yy, yy + 1.4, ['#8c90a8', '#23252f']);
-        ctx.fillRect(x + 20, yy, 12.5, 1.4);
+      const xf = x + 22; // front edge; the back edge is SKEW further right
+      const k = DEPTH / SKEW; // rise per unit going back
+      const floorFront = y + FRONT;
+      const raise = tl.open * (FRONT - 4);
+      const bottom = floorFront - 3 - raise; // spike tips rest on the floor when shut
+      const bar = (x0, y0, x1, y1, w) => {
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x1, y1);
+        ctx.strokeStyle = '#161a30';
+        ctx.lineWidth = w + 0.9;
+        ctx.stroke();
+        ctx.strokeStyle = '#dfe4f2';
+        ctx.lineWidth = w;
+        ctx.stroke();
+      };
+
+      if (bottom > y + 1) {
+        ctx.save();
+        // Only the part below the ceiling line shows.
+        poly(ctx, [xf - 0.5, y], [xf + SKEW + 1, y - DEPTH], [xf + SKEW + 1, floorFront + 4], [xf - 0.5, floorFront + 4]);
+        ctx.clip();
+        ctx.lineCap = 'round';
+        // Horizontal bars run back into the room; they move up with the gate.
+        for (let yb = bottom - 1.5; yb > y - 2; yb -= 5.5) bar(xf, yb, xf + SKEW, yb - DEPTH, 1);
+        // Upright bars, each ending in a spike.
+        for (const u of [0, SKEW / 4, SKEW / 2, (3 * SKEW) / 4, SKEW]) {
+          const yb = bottom - u * k;
+          bar(xf + u, y - u * k - 2, xf + u, yb, 1.1);
+          poly(ctx, [xf + u - 0.9, yb], [xf + u + 0.9, yb], [xf + u, yb + 3]);
+          ctx.fillStyle = '#dfe4f2';
+          ctx.fill();
+          ctx.strokeStyle = '#161a30';
+          ctx.lineWidth = 0.4;
+          ctx.stroke();
+        }
+        ctx.restore();
       }
     });
   }
