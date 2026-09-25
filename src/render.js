@@ -10,25 +10,27 @@ import { drawCharacter, drawShadow } from './character.js';
 // Depth follows the original's oblique view from slightly above: every floor
 // is a slab whose top surface recedes towards the back wall (its back edge
 // shifted SKEW units right), so floor ends and stone blocks show a side face.
-const SLAB_TOP = 46;
+const SLAB_TOP = 43;
 const FRONT = 56; // front edge of the floor surface; feet stand at 55
-const SKEW = 7;
+const DEPTH = FRONT - SLAB_TOP; // how far top surfaces recede (13)
+const SKEW = 16; // how far right the back edge shifts: side faces are half a stone wide
+const COURSE = TILE_H / 4; // four courses of stone per tile
 const FONT = "'Cinzel', 'Trajan Pro', Georgia, 'Times New Roman', serif";
 
 const C = {
   void: '#000000',
   mark: '#22305a',
-  mortar: '#0b0f20',
-  stone: ['#7684a6', '#6d7b9d', '#7e8cae', '#68769a'],
-  stoneHi: '#a4b1cc',
-  stoneLo: '#2f3b5a',
-  stoneSpeck: '#4b597b',
-  top: '#5d6b8c',
-  topBack: '#3e4a68',
-  topEdge: '#8c9aba',
-  side: '#26305a',
-  sideLight: '#46527e',
-  sideDark: '#0e1428',
+  mortar: '#34426e',
+  stone: ['#7a8aae', '#7a8aae', '#8494b8', '#7a8aae', '#71819f', '#7a8aae', '#8494b8', '#7392b4'],
+  stoneSpeck: '#586890',
+  stoneHi: '#a2b0ce',
+  stoneLo: '#34426e',
+  topBack: '#4e5e86',
+  top: '#63739b',
+  topEdge: '#94a3c6',
+  side: ['#52628c', '#4b5b85', '#5a6a94'],
+  sideMortar: '#27335c',
+  sideDark: '#1c2548',
   flame: ['#fff6c0', '#ffc040', '#ff6a1a', 'rgba(200,30,0,0)'],
   gold: '#f0c850',
   text: '#f2ead2',
@@ -155,12 +157,14 @@ export class Renderer {
       if (level.isWall(c, r)) this.wallFace(ctx, x, y, c, r);
       else this.backWall(ctx, x, y, c, r);
     });
+    // Stone blocks' caps and side faces first; floors drawn after cover the
+    // parts of them that are behind a floor or ledge.
+    this.eachTile(rx, ry, (c, r, x, y) => {
+      if (level.isWall(c, r)) this.wallDepth(ctx, x, y, c, r, level);
+    });
     this.eachTile(rx, ry, (c, r, x, y) => {
       const tl = level.tile(c, r);
       switch (tl.t) {
-        case T.WALL:
-          this.wallDepth(ctx, x, y, c, r, level);
-          break;
         case T.TORCH:
           this.sconce(ctx, x, y);
           this.floor(ctx, x, y, c, r, level);
@@ -183,7 +187,6 @@ export class Renderer {
           break;
       }
     });
-    this.torchLight(ctx, level, rx, ry);
   }
 
   // Open space behind the platforms is dark, with only a faint dotted outline
@@ -210,111 +213,103 @@ export class Renderer {
     ctx.setLineDash([]);
   }
 
-  // One dressed stone, carved in relief: a shaded face, chamfered edges lit
-  // from the top left and dark on the bottom right, grain and a few pits.
+  // One dressed stone, flat-coloured like the original's: a few lighter,
+  // darker or bluer stones, a faint lit top edge, and specks.
   stoneFace(ctx, x, y, w, h, seed) {
     if (w <= 0 || h <= 0) return;
     ctx.fillStyle = C.stone[seed % C.stone.length];
     ctx.fillRect(x, y, w, h);
-    const g = ctx.createLinearGradient(x, y, x + w * 0.3, y + h);
-    g.addColorStop(0, 'rgba(255,255,255,0.16)');
-    g.addColorStop(0.55, 'rgba(255,255,255,0)');
-    g.addColorStop(1, 'rgba(0,0,24,0.28)');
-    ctx.fillStyle = g;
-    ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = this.pattern(ctx, 'grain');
-    ctx.fillRect(x, y, w, h);
-
-    const b = Math.min(2, w / 4, h / 4);
-    poly(ctx, [x, y], [x + w, y], [x + w - b, y + b], [x + b, y + b]);
-    ctx.fillStyle = 'rgba(235,240,255,0.55)';
-    ctx.fill();
-    poly(ctx, [x, y], [x + b, y + b], [x + b, y + h - b], [x, y + h]);
-    ctx.fillStyle = 'rgba(225,232,255,0.3)';
-    ctx.fill();
-    poly(ctx, [x, y + h], [x + b, y + h - b], [x + w - b, y + h - b], [x + w, y + h]);
-    ctx.fillStyle = 'rgba(4,6,24,0.6)';
-    ctx.fill();
-    poly(ctx, [x + w, y], [x + w, y + h], [x + w - b, y + h - b], [x + w - b, y + b]);
-    ctx.fillStyle = 'rgba(4,6,24,0.42)';
-    ctx.fill();
-
-    for (let k = 0; k < 3; k++) {
+    ctx.fillStyle = 'rgba(210,220,245,0.35)';
+    ctx.fillRect(x, y, w, 0.7);
+    ctx.fillStyle = C.stoneSpeck;
+    for (let k = 0; k < 4; k++) {
       const s = hash(seed, k, 3);
-      if (s % 3 === 0 || w < 8 || h < 7) continue;
-      const px = x + b + 1 + (s % Math.max(1, w - 2 * b - 3));
-      const py = y + b + 1 + ((s >>> 6) % Math.max(1, h - 2 * b - 3));
-      const r = 0.5 + ((s >>> 12) % 3) * 0.3;
-      ctx.fillStyle = 'rgba(10,14,40,0.55)';
-      ctx.beginPath();
-      ctx.ellipse(px, py, r * 1.4, r, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = 'rgba(230,236,255,0.35)';
-      ctx.beginPath();
-      ctx.ellipse(px + 0.3, py + r * 0.8, r * 1.2, r * 0.45, 0, 0, Math.PI);
-      ctx.fill();
+      if (s % 3 === 0 || w < 6 || h < 5) continue;
+      const px = x + 2 + (s % Math.max(1, w - 5));
+      const py = y + 2 + ((s >>> 6) % Math.max(1, h - 4));
+      ctx.fillRect(px, py, 1.1, 0.8);
+      if (s % 5 === 0) ctx.fillRect(px + 1.1, py - 0.8, 0.8, 0.8);
     }
   }
 
-  // A course of stones of uneven width. Joints are laid out along the whole
-  // row of the world, so stones run on across tile boundaries; each tile draws
-  // the part of the row inside it.
+  // A course of stones. Joints are laid out along the whole row of the world,
+  // so stones run on across tile boundaries; each tile draws its part.
   course(ctx, x, y, h, c, row, width = TILE_W) {
     const x0 = c * TILE_W;
-    let bx = -(hash(0, row, 1) % 20);
+    let bx = -(hash(0, row, 1) % 28);
     let j = 0;
     ctx.save();
     ctx.beginPath();
     ctx.rect(x, y, width, h);
     ctx.clip();
     while (bx < x0 + width) {
-      const w = 14 + (hash(j, row, 7) % 9);
-      if (bx + w > x0) this.stoneFace(ctx, x + bx - x0 + 0.4, y + 0.4, w - 0.8, h - 0.8, hash(j, row, 9));
+      const w = 24 + (hash(j, row, 7) % 11);
+      if (bx + w > x0) this.stoneFace(ctx, x + bx - x0 + 0.6, y + 0.6, w - 1.2, h - 1.2, hash(j, row, 9));
       bx += w;
       j++;
     }
     ctx.restore();
   }
 
-  // Solid masonry: three courses of large stones.
+  // Solid masonry: four courses of large stones.
   wallFace(ctx, x, y, c, r) {
     ctx.fillStyle = C.mortar;
     ctx.fillRect(x, y, TILE_W, TILE_H);
-    for (let i = 0; i < 3; i++) this.course(ctx, x, y + i * 21, 21, c, 1000 + r * 3 + i);
+    for (let i = 0; i < 4; i++) this.course(ctx, x, y + i * COURSE, COURSE, c, 1000 + r * 4 + i);
   }
 
-  // Top surface of a slab (floor or stone block), receding towards the back:
-  // dark at the back, lit towards the front, with a bright bevelled edge.
-  topSurface(ctx, x, top, front) {
-    poly(ctx, [x, front], [x + TILE_W, front], [x + TILE_W + SKEW, top], [x + SKEW, top]);
-    ctx.fillStyle = vgrad(ctx, top, front, ['#2c3656', '#56648a', '#8190b4', '#9aa8ca']);
+  // Top surface of a slab or stone mass: a flat parallelogram receding
+  // towards the back, with a light front edge. With `stopRight` it ends at the
+  // tile's right edge, because a stone block stands in front there.
+  topSurface(ctx, x, top, front, stopRight = false) {
+    const xr = x + TILE_W + (stopRight ? 0 : SKEW);
+    poly(ctx, [x, front], [x + TILE_W, front], [xr, top], [x + SKEW, top]);
+    ctx.fillStyle = C.top;
     ctx.fill();
-    ctx.fillStyle = this.pattern(ctx, 'grain');
-    ctx.fill();
-    // Joint receding into the surface at the tile's right edge.
-    ctx.strokeStyle = 'rgba(8,10,30,0.45)';
-    ctx.lineWidth = 0.5;
+    ctx.strokeStyle = C.mortar;
+    ctx.lineWidth = 0.6;
     ctx.beginPath();
-    ctx.moveTo(x + TILE_W, front);
-    ctx.lineTo(x + TILE_W + SKEW, top);
+    ctx.moveTo(x + SKEW, top);
+    ctx.lineTo(xr, top);
     ctx.stroke();
-    ctx.fillStyle = '#d4dcf6';
-    ctx.fillRect(x, front - 1, TILE_W, 1);
+    ctx.fillStyle = C.topEdge;
+    ctx.fillRect(x, front - 1.2, TILE_W, 1.2);
   }
 
-  // The side of a block or slab where it ends: in shadow, darkening towards
-  // the back, with a lit front corner and the original's checker dither.
-  sideFace(ctx, x, top, front, bottom) {
-    poly(ctx, [x, front], [x + SKEW, top], [x + SKEW, bottom - (front - top)], [x, bottom]);
-    ctx.fillStyle = hgrad(ctx, x, x + SKEW, [C.sideLight, C.side, '#10152c']);
+  // The right-hand side of a block or slab: a wide, darker face showing the
+  // ends of the same stone courses, like the original's.
+  sideFace(ctx, x, top, front, bottom, seed = 0) {
+    const d = front - top;
+    poly(ctx, [x, front], [x + SKEW, top], [x + SKEW, bottom - d], [x, bottom]);
+    ctx.fillStyle = C.sideMortar;
     ctx.fill();
+    const courses = Math.max(1, Math.round((bottom - front) / COURSE));
+    const ch = (bottom - front) / courses;
+    const k = d / SKEW; // rise per unit across
+    for (let i = 0; i < courses; i++) {
+      const a = front + i * ch;
+      const joint = (i + seed) % 2 ? SKEW * 0.55 : SKEW + 1;
+      for (const [u0, u1] of [[0, Math.min(joint, SKEW)], [joint, SKEW]]) {
+        if (u1 - u0 < 1) continue;
+        const e0 = u0 + 0.5;
+        const e1 = u1 - 0.5;
+        poly(ctx, [x + e0, a + 0.6 - e0 * k], [x + e1, a + 0.6 - e1 * k], [x + e1, a + ch - 0.6 - e1 * k], [x + e0, a + ch - 0.6 - e0 * k]);
+        ctx.fillStyle = C.side[(i + seed + (u0 > 0)) % C.side.length];
+        ctx.fill();
+      }
+    }
     ctx.save();
-    ctx.globalAlpha = 0.55;
+    ctx.globalAlpha = 0.15;
+    poly(ctx, [x, front], [x + SKEW, top], [x + SKEW, bottom - d], [x, bottom]);
     ctx.fillStyle = this.dither(ctx);
     ctx.fill();
     ctx.restore();
-    ctx.fillStyle = 'rgba(200,210,245,0.45)';
-    ctx.fillRect(x, front, 0.7, bottom - front);
+    ctx.strokeStyle = C.sideDark;
+    ctx.lineWidth = 0.6;
+    ctx.beginPath();
+    ctx.moveTo(x + SKEW, top);
+    ctx.lineTo(x + SKEW, bottom - d);
+    ctx.stroke();
   }
 
   // Device-resolution patterns (checker dither, stone grain), cached per context.
@@ -339,48 +334,44 @@ export class Renderer {
 
   // Stone block: top surface where open above, side face where open to the right.
   wallDepth(ctx, x, y, c, r, level) {
-    const depth = FRONT - SLAB_TOP;
-    if (!level.hasFloor(c, r - 1)) {
-      this.topSurface(ctx, x, y - depth, y);
-      ctx.fillStyle = C.topEdge;
-      ctx.fillRect(x, y - 0.5, TILE_W, 0.8);
-    }
+    // Stone above-right stands in front of anything reaching back into it.
+    const blockedAbove = level.isWall(c + 1, r - 1);
+    if (!level.hasFloor(c, r - 1)) this.topSurface(ctx, x, y - DEPTH, y, blockedAbove);
     if (!level.isWall(c + 1, r)) {
-      this.sideFace(ctx, x + TILE_W, y - depth, y, y + TILE_H);
-      ctx.strokeStyle = C.void;
-      ctx.lineWidth = 0.6;
-      for (const k of [21, 42]) {
+      ctx.save();
+      if (blockedAbove) {
         ctx.beginPath();
-        ctx.moveTo(x + TILE_W, y + k);
-        ctx.lineTo(x + TILE_W + SKEW, y + k - depth);
-        ctx.stroke();
+        ctx.rect(x + TILE_W, y, SKEW + 1, TILE_H);
+        ctx.clip();
       }
+      this.sideFace(ctx, x + TILE_W, y - DEPTH, y, y + TILE_H, r);
+      ctx.restore();
     }
   }
 
   floor(ctx, x, y, c, r, level, dy = 0) {
     const top = y + SLAB_TOP + dy;
     const front = y + FRONT + dy;
-    this.topSurface(ctx, x, top, front);
+    this.topSurface(ctx, x, top, front, level.isWall(c + 1, r));
     ctx.fillStyle = C.stoneSpeck;
     for (let k = 0; k < 3; k++) {
       const h = hash(c, r, k + 40);
-      ctx.fillRect(x + 4 + (h % 26), top + 2 + ((h >>> 5) % 6), 1.2, 0.6);
+      ctx.fillRect(x + 4 + (h % 26) + ((h >>> 5) % 8), top + 2 + ((h >>> 5) % 8), 1.1, 0.7);
     }
     this.floorFront(ctx, x, y + dy, c, r, level);
   }
 
-  // The slab's front edge (and dark side face where it ends at a drop). Also
+  // The slab's front edge (and side face where it ends at a drop). Also
   // drawn in the foreground so a hanging Prince's hands go behind the lip.
   floorFront(ctx, x, y, c, r, level) {
     const front = y + FRONT;
     const bottom = y + TILE_H;
     ctx.fillStyle = C.mortar;
     ctx.fillRect(x, front, TILE_W, bottom - front);
-    this.stoneFace(ctx, x + 0.3, front + 0.3, TILE_W - 0.6, bottom - front - 0.6, hash(c, r, 21));
-    ctx.fillStyle = C.topEdge;
-    ctx.fillRect(x, front - 0.4, TILE_W, 0.8);
-    if (level.tile(c + 1, r).t === T.EMPTY) this.sideFace(ctx, x + TILE_W, y + SLAB_TOP, front, bottom);
+    this.stoneFace(ctx, x + 0.6, front + 0.6, TILE_W - 1.2, bottom - front - 1.2, hash(c, r, 21));
+    if (level.tile(c + 1, r).t === T.EMPTY && !level.isWall(c + 1, r + 1)) {
+      this.sideFace(ctx, x + TILE_W, y + SLAB_TOP, front, bottom, c);
+    }
   }
 
   // A tapered iron cup on a short bracket.
@@ -437,20 +428,28 @@ export class Renderer {
     });
   }
 
-  // A column of stacked stones with a dark dithered side, standing on the floor.
+  // A column of stacked stones with its darker side, standing on the floor.
   pillar(ctx, x, y, c, r) {
     const x0 = x + 7;
-    const x1 = x + 22;
-    const bottom = y + SLAB_TOP + 5;
-    poly(ctx, [x1, y], [x1 + SKEW, y], [x1 + SKEW, bottom - (FRONT - SLAB_TOP)], [x1, bottom]);
-    ctx.fillStyle = C.side;
+    const x1 = x + 21;
+    const bottom = y + FRONT - 4;
+    const sk = SKEW * 0.5;
+    const d = DEPTH * 0.5;
+    poly(ctx, [x1, y], [x1 + sk, y], [x1 + sk, bottom - d], [x1, bottom]);
+    ctx.fillStyle = C.side[1];
     ctx.fill();
-    ctx.fillStyle = this.dither(ctx);
-    ctx.fill();
+    ctx.strokeStyle = C.sideMortar;
+    ctx.lineWidth = 0.6;
+    const h = (bottom - y) / 4;
+    for (let i = 1; i < 4; i++) {
+      ctx.beginPath();
+      ctx.moveTo(x1, y + i * h);
+      ctx.lineTo(x1 + sk, y + i * h - d);
+      ctx.stroke();
+    }
     ctx.fillStyle = C.mortar;
     ctx.fillRect(x0, y, x1 - x0, bottom - y);
-    const h = (bottom - y) / 4;
-    for (let i = 0; i < 4; i++) this.stoneFace(ctx, x0 + 0.4, y + i * h + 0.4, x1 - x0 - 0.8, h - 0.8, hash(c, r, i + 60));
+    for (let i = 0; i < 4; i++) this.stoneFace(ctx, x0 + 0.6, y + i * h + 0.6, x1 - x0 - 1.2, h - 1.2, hash(c, r, i + 60));
   }
 
   // ---- animated pieces -----------------------------------------------------
@@ -544,9 +543,12 @@ export class Renderer {
     const h = (ext / 5) * 13;
     const base = y + (front ? 55 : 50);
     for (const sx of front ? [5, 12, 19, 26] : [9, 16, 23, 30]) {
-      ctx.fillStyle = 'rgba(10,12,30,0.8)';
-      ctx.fillRect(x + sx - 1.6, base - 0.4, 3.2, 0.8);
-      if (!h) continue;
+      if (!h) {
+        poly(ctx, [x + sx - 0.9, base], [x + sx + 0.9, base], [x + sx, base - 1.6]);
+        ctx.fillStyle = '#b8bed8';
+        ctx.fill();
+        continue;
+      }
       poly(ctx, [x + sx - 1.1, base], [x + sx + 1.1, base], [x + sx, base - h]);
       ctx.fillStyle = hgrad(ctx, x + sx - 1.1, x + sx + 1.1, ['#ffffff', '#b8bed8', '#555c80']);
       ctx.fill();
